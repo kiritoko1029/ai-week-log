@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>WeekLog — Git 周报/日报生成工具</title>
+  <style>
+    :root {
+      --bg:#f5f8ff; --surface:#ffffff; --surface-warm:#eaf1ff; --fg:#101828; --fg-2:#344054;
+      --muted:#667085; --border:#d7e0ef; --border-soft:#edf2f8; --accent:#2563eb; --accent-on:#ffffff;
+      --success:#16a34a; --warn:#f59e0b; --danger:#ef4444; --notes:#7c3aed;
+      --notes-soft:color-mix(in oklab,var(--notes) 12%,transparent);
+      --font-body:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
+      --font-mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+      --text-xs:12px; --text-sm:14px; --text-base:16px; --text-lg:18px; --text-xl:24px; --text-2xl:36px;
+      --leading-body:1.52; --tracking-display:-0.025em;
+      --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:20px;--s6:24px;--s8:32px;
+      --r-sm:10px;--r-md:16px;--r-lg:24px;--r-pill:9999px;
+      --focus:0 0 0 4px rgba(37,99,235,.22); --motion:240ms cubic-bezier(.2,0,0,1); --sidebar-w:240px;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%}
+    body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:var(--text-base);
+      line-height:var(--leading-body);-webkit-font-smoothing:antialiased;overflow:hidden}
+    button{font:inherit;cursor:pointer;border:none;background:none}
+    input,select,textarea{font:inherit}
+    .app{display:flex;height:100vh;flex-direction:column}
+    .titlebar{height:36px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;
+      align-items:center;padding:0 var(--s4);flex-shrink:0;-webkit-app-region:drag}
+    .titlebar-title{font-size:var(--text-xs);font-weight:600;color:var(--muted);flex:1;text-align:center}
+    .app-body{display:flex;flex:1;overflow:hidden}
+    .sidebar{width:var(--sidebar-w);background:var(--surface);border-right:1px solid var(--border);
+      display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+    .sidebar-brand{padding:var(--s6) var(--s5);border-bottom:1px solid var(--border-soft)}
+    .sidebar-brand h1{font-size:20px;font-weight:700;letter-spacing:var(--tracking-display)}
+    .sidebar-brand span{font-size:var(--text-xs);color:var(--muted);font-family:var(--font-mono)}
+    .sidebar-section{padding:var(--s4) var(--s3)}
+    .sidebar-section-title{font-size:var(--text-xs);font-weight:600;color:var(--muted);text-transform:uppercase;
+      letter-spacing:.06em;padding:0 var(--s3) var(--s2);font-family:var(--font-mono)}
+    .sidebar-nav{list-style:none}
+    .sidebar-nav li{margin-bottom:2px}
+    .nav-item{display:flex;align-items:center;gap:var(--s3);padding:var(--s3);border-radius:var(--r-sm);
+      font-size:var(--text-sm);font-weight:500;color:var(--fg-2);width:100%;text-align:left;transition:all 150ms}
+    .nav-item:hover{background:var(--surface-warm);color:var(--fg)}
+    .nav-item.active{background:var(--accent);color:var(--accent-on)}
+    .nav-item svg{width:18px;height:18px;flex-shrink:0}
+    .nav-item .nav-badge{margin-left:auto;background:var(--accent);color:var(--accent-on);font-size:11px;
+      font-weight:600;padding:1px 7px;border-radius:var(--r-pill);font-family:var(--font-mono)}
+    .nav-item.active .nav-badge{background:var(--accent-on);color:var(--accent)}
+    .nav-badge.notes-badge{background:var(--notes-soft);color:var(--notes)}
+    .content{flex:1;overflow-y:auto;overflow-x:hidden}
+    .page{display:none;padding:var(--s8);max-width:980px;animation:fadeIn var(--motion)}
+    .page.active{display:block}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+    .page-header{margin-bottom:var(--s8)}
+    .page-header h2{font-size:var(--text-xl);font-weight:700;letter-spacing:var(--tracking-display);margin-bottom:var(--s1)}
+    .page-header p{font-size:var(--text-sm);color:var(--muted)}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s6)}
+    .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--s5)}
+    .card-header h3{font-size:var(--text-lg);font-weight:600}
+    .card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:var(--s4);margin-bottom:var(--s6)}
+    .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s5)}
+    .stat-card .stat-label{font-size:var(--text-xs);color:var(--muted);font-family:var(--font-mono);
+      text-transform:uppercase;letter-spacing:.04em;margin-bottom:var(--s2)}
+    .stat-card .stat-value{font-size:var(--text-2xl);font-weight:700;font-family:var(--font-mono);
+      font-variant-numeric:tabular-nums;line-height:1}
+    .stat-card .stat-delta{font-size:var(--text-xs);font-family:var(--font-mono);margin-top:var(--s2);color:var(--muted)}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);padding:var(--s3) var(--s5);
+      border-radius:var(--r-sm);font-size:var(--text-sm);font-weight:600;transition:all 150ms;white-space:nowrap}
+    .btn:focus-visible{outline:none;box-shadow:var(--focus)}
+    .btn svg{width:16px;height:16px}
+    .btn-primary{background:var(--accent);color:var(--accent-on)}
+    .btn-primary:hover{filter:brightness(.94)}
+    .btn-secondary{background:var(--surface);color:var(--fg);border:1px solid var(--border)}
+    .btn-secondary:hover{border-color:var(--accent);color:var(--accent)}
+    .btn-ghost{color:var(--muted)}.btn-ghost:hover{color:var(--fg);background:var(--surface-warm)}
+    .btn-notes{background:var(--notes);color:#fff}.btn-notes:hover{filter:brightness(.94)}
+    .btn-sm{padding:var(--s2) var(--s3);font-size:var(--text-xs)}
+    .btn-lg{padding:var(--s4) var(--s8);font-size:var(--text-base)}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    .field{display:flex;flex-direction:column;gap:var(--s1)}
+    .field-label{font-size:var(--text-sm);font-weight:500;color:var(--fg-2)}
+    .field-hint{font-size:var(--text-xs);color:var(--muted)}
+    .input,.select{width:100%;padding:var(--s3) var(--s4);border:1px solid var(--border);border-radius:var(--r-sm);
+      background:var(--surface);color:var(--fg);font-size:var(--text-sm);transition:border-color 150ms}
+    .input:focus,.select:focus{outline:none;border-color:var(--accent);box-shadow:var(--focus)}
+    .select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat:no-repeat;background-position:right 12px center;padding-right:36px}
+    textarea.input{min-height:80px;resize:vertical;line-height:1.55}
+    .field-row{display:flex;gap:var(--s4);margin-bottom:var(--s4);flex-wrap:wrap}
+    .field-row .field{flex:1;min-width:140px}
+    .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:var(--s4) 0;border-bottom:1px solid var(--border-soft)}
+    .toggle-row:last-child{border-bottom:none}
+    .toggle-info h4{font-size:var(--text-sm);font-weight:600}
+    .toggle-info p{font-size:var(--text-xs);color:var(--muted);margin-top:2px}
+    .toggle{position:relative;width:44px;height:24px;flex-shrink:0}
+    .toggle input{opacity:0;width:0;height:0}
+    .toggle-track{position:absolute;inset:0;background:var(--border);border-radius:12px;transition:background 150ms}
+    .toggle-track::after{content:'';position:absolute;top:2px;left:2px;width:20px;height:20px;background:var(--surface);
+      border-radius:50%;transition:transform 150ms;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+    .toggle input:checked+.toggle-track{background:var(--accent)}
+    .toggle input:checked+.toggle-track::after{transform:translateX(20px)}
+    .badge{display:inline-flex;align-items:center;gap:4px;padding:2px var(--s2);border-radius:var(--r-pill);
+      font-size:11px;font-weight:600;font-family:var(--font-mono)}
+    .badge-success{background:color-mix(in oklab,var(--success) 14%,transparent);color:var(--success)}
+    .badge-warn{background:color-mix(in oklab,var(--warn) 14%,transparent);color:var(--warn)}
+    .badge-danger{background:color-mix(in oklab,var(--danger) 14%,transparent);color:var(--danger)}
+    .badge-muted{background:var(--border-soft);color:var(--muted)}
+    .badge-accent{background:color-mix(in oklab,var(--accent) 14%,transparent);color:var(--accent)}
+    .badge-notes{background:var(--notes-soft);color:var(--notes)}
+    .tag{display:inline-flex;align-items:center;padding:var(--s1) var(--s3);background:var(--border-soft);
+      color:var(--fg-2);border-radius:var(--r-pill);font-size:var(--text-xs);font-weight:500}
+    .tag-notes{background:var(--notes-soft);color:var(--notes)}
+    .repo-item{display:flex;align-items:center;gap:var(--s4);padding:var(--s4) var(--s5);border:1px solid var(--border);
+      border-radius:var(--r-md);background:var(--surface);margin-bottom:var(--s3)}
+    .repo-icon{width:40px;height:40px;background:var(--surface-warm);border-radius:var(--r-sm);display:grid;
+      place-items:center;color:var(--accent);flex-shrink:0}
+    .repo-icon svg{width:20px;height:20px}
+    .repo-info{flex:1;min-width:0}.repo-name{font-weight:600;font-size:var(--text-sm)}
+    .repo-path{font-size:var(--text-xs);color:var(--muted);font-family:var(--font-mono);overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap}
+    .repo-meta{display:flex;align-items:center;gap:var(--s3);flex-shrink:0}
+    .gen-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s6);margin-bottom:var(--s6)}
+    .gen-row{display:flex;gap:var(--s4);flex-wrap:wrap;margin-bottom:var(--s5)}
+    .gen-actions{display:flex;gap:var(--s3);align-items:center;flex-wrap:wrap}
+    .mode-switch{display:inline-flex;background:var(--surface-warm);border-radius:var(--r-pill);padding:4px;gap:4px}
+    .mode-switch button{padding:var(--s2) var(--s5);border-radius:var(--r-pill);font-size:var(--text-sm);font-weight:600;
+      color:var(--muted);display:inline-flex;align-items:center;gap:var(--s2)}
+    .mode-switch button.active{background:var(--surface);color:var(--accent);box-shadow:0 1px 3px rgba(16,24,40,.08)}
+    .mode-switch button svg{width:15px;height:15px}
+    .report-preview{background:var(--fg);color:#e2e8f0;border-radius:var(--r-md);padding:var(--s8);
+      font-family:var(--font-mono);font-size:var(--text-sm);line-height:1.85;white-space:pre-wrap;overflow-x:auto;min-height:120px}
+    .report-preview .report-date{color:#60a5fa;font-weight:600;display:block}
+    .report-preview .report-project{color:#e2e8f0;padding-left:var(--s2);display:block}
+    .report-preview .report-project strong{color:#93c5fd}
+    .report-preview .report-project.notes-project strong{color:#c4b5fd}
+    .status-bar{display:flex;align-items:center;gap:var(--s3);padding:var(--s3) var(--s5);background:var(--surface);
+      border-top:1px solid var(--border);font-size:var(--text-xs);color:var(--muted);font-family:var(--font-mono);flex-shrink:0}
+    .status-dot{width:6px;height:6px;border-radius:50%}.status-dot.ok{background:var(--success)}.status-dot.err{background:var(--danger)}
+    .note-quick-add{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s4);
+      margin-bottom:var(--s6);display:flex;gap:var(--s3);align-items:flex-end;flex-wrap:wrap}
+    .note-quick-add .note-text{flex:1;min-width:200px}
+    .note-day{margin-bottom:var(--s6)}
+    .note-day-header{display:flex;align-items:baseline;gap:var(--s3);margin-bottom:var(--s3)}
+    .note-day-date{font-family:var(--font-mono);font-size:var(--text-sm);font-weight:600}
+    .note-day-count{font-size:var(--text-xs);color:var(--muted);font-family:var(--font-mono)}
+    .note-card{display:flex;gap:var(--s3);padding:var(--s4);border:1px solid var(--border-soft);border-left:3px solid var(--notes);
+      border-radius:var(--r-sm);background:var(--surface);margin-bottom:var(--s2)}
+    .note-card.project{border-left-color:var(--accent)}
+    .note-card-icon{width:28px;height:28px;background:var(--notes-soft);border-radius:var(--r-sm);display:grid;
+      place-items:center;color:var(--notes);flex-shrink:0}
+    .note-card-icon svg{width:15px;height:15px}
+    .note-card-body{flex:1;min-width:0}
+    .note-card-meta{display:flex;align-items:center;gap:var(--s2);margin-bottom:4px}
+    .note-card-content{font-size:var(--text-sm);color:var(--fg-2);line-height:1.55}
+    .provider-card{border:2px solid var(--border);border-radius:var(--r-md);padding:var(--s5);cursor:pointer;
+      transition:all 150ms;background:var(--surface)}
+    .provider-card:hover{border-color:var(--accent)}
+    .provider-card.selected{border-color:var(--accent);background:var(--surface-warm)}
+    .provider-card h4{font-size:var(--text-base);font-weight:600;margin-bottom:var(--s1)}
+    .provider-card p{font-size:var(--text-xs);color:var(--muted)}
+    .provider-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4);margin-bottom:var(--s5)}
+    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(16,24,40,.4);backdrop-filter:blur(4px);
+      z-index:100;align-items:center;justify-content:center}
+    .modal-overlay.show{display:flex}
+    .modal{background:var(--surface);border-radius:var(--r-md);width:480px;max-width:90vw;
+      box-shadow:0 20px 52px rgba(16,24,40,.11);animation:modalIn var(--motion)}
+    @keyframes modalIn{from{opacity:0;transform:scale(.96) translateY(8px)}}
+    .modal-header{display:flex;align-items:center;justify-content:space-between;padding:var(--s5) var(--s6);
+      border-bottom:1px solid var(--border-soft)}
+    .modal-header h3{font-size:var(--text-lg);font-weight:600}
+    .modal-body{padding:var(--s6)}
+    .modal-footer{display:flex;justify-content:flex-end;gap:var(--s3);padding:var(--s4) var(--s6);border-top:1px solid var(--border-soft)}
+    .filter-bar{display:flex;gap:var(--s3);align-items:center;flex-wrap:wrap;margin-bottom:var(--s5)}
+    .filter-chip{display:inline-flex;align-items:center;gap:4px;padding:var(--s2) var(--s3);border:1px solid var(--border);
+      border-radius:var(--r-pill);font-size:var(--text-xs);font-weight:500;color:var(--fg-2);background:var(--surface);transition:all 150ms}
+    .filter-chip:hover{border-color:var(--accent);color:var(--accent)}
+    .filter-chip.active{background:var(--accent);color:var(--accent-on);border-color:var(--accent)}
+    .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r-md);background:var(--surface)}
+    .ds-table{width:100%;border-collapse:collapse;font-size:var(--text-sm)}
+    .ds-table th,.ds-table td{padding:var(--s3) var(--s4);text-align:left}
+    .ds-table th{color:var(--muted);font-weight:600;font-size:var(--text-xs);font-family:var(--font-mono);
+      background:var(--surface-warm);border-bottom:1px solid var(--border)}
+    .ds-table td{border-bottom:1px solid var(--border-soft)}
+    .ds-table tbody tr:last-child td{border-bottom:none}
+    .ds-table .mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+    .code-block{background:var(--fg);color:#e2e8f0;border-radius:var(--r-sm);padding:var(--s4);font-family:var(--font-mono);
+      font-size:var(--text-xs);line-height:1.7;overflow-x:auto;white-space:pre}
+    .callout{padding:var(--s4);background:var(--surface-warm);border-radius:var(--r-sm);border-left:3px solid var(--accent)}
+    .callout.notes-callout{border-left-color:var(--notes)}
+    .callout p{font-size:var(--text-xs);color:var(--fg-2)}
+    .fusion-summary{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4)}
+    .fusion-box{border:1px solid var(--border);border-radius:var(--r-sm);padding:var(--s4)}
+    .fusion-box.commits{border-top:3px solid var(--accent)}.fusion-box.notes{border-top:3px solid var(--notes)}
+    .fusion-box h4{font-size:var(--text-xs);text-transform:uppercase;font-family:var(--font-mono);margin-bottom:var(--s2)}
+    .fusion-box.commits h4{color:var(--accent)}.fusion-box.notes h4{color:var(--notes)}
+    .fusion-box p{font-size:var(--text-sm);color:var(--fg-2)}
+    .fusion-num{font-family:var(--font-mono);font-size:var(--text-xl);font-weight:700;color:var(--fg)}
+    .empty{padding:var(--s8);text-align:center;color:var(--muted);font-size:var(--text-sm)}
+    ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .spin{animation:spin 1s linear infinite}
+    code.inline{font-family:var(--font-mono);background:var(--border-soft);padding:1px 5px;border-radius:3px;font-size:.9em}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="titlebar">
+      <div style="min-width:56px;display:flex;align-items:center"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg></div>
+      <span class="titlebar-title">WeekLog — Git 周报 / 日报生成工具</span>
+      <div style="min-width:56px"></div>
+    </div>
+
+    <div class="app-body">
+      <aside class="sidebar">
+        <div class="sidebar-brand"><h1>WeekLog</h1><span id="versionTag">v1.1.0 · 本地运行</span></div>
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">概览</div>
+          <ul class="sidebar-nav"><li><button class="nav-item active" data-page="dashboard">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>仪表盘</button></li></ul>
+        </div>
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">生成</div>
+          <ul class="sidebar-nav">
+            <li><button class="nav-item" data-page="generate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>生成周报 / 日报</button></li>
+            <li><button class="nav-item" data-page="daily"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>今日日报</button></li>
+          </ul>
+        </div>
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">笔记</div>
+          <ul class="sidebar-nav"><li><button class="nav-item" data-page="notes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>笔记管理<span class="nav-badge notes-badge" id="navNotesBadge">0</span></button></li></ul>
+        </div>
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">管理</div>
+          <ul class="sidebar-nav">
+            <li><button class="nav-item" data-page="repos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4h16v16H4z"/><path d="M4 9h16"/><path d="M9 4v16"/></svg>仓库管理<span class="nav-badge" id="navRepoBadge">0</span></button></li>
+            <li><button class="nav-item" data-page="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>历史记录</button></li>
+          </ul>
+        </div>
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">配置</div>
+          <ul class="sidebar-nav"><li><button class="nav-item" data-page="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>AI 与输出设置</button></li></ul>
+        </div>
+      </aside>
+
+      <div class="content">
+
+        <!-- 仪表盘 -->
+        <div id="page-dashboard" class="page active">
+          <div class="page-header"><h2>仪表盘</h2><p>本周工作概览 · commit + 笔记双信息源融合</p></div>
+          <div class="card-grid" id="dashStats">
+            <div class="stat-card"><div class="stat-label">本周 Commits</div><div class="stat-value" id="statCommits">—</div><div class="stat-delta" id="statCommitsDelta">加载中…</div></div>
+            <div class="stat-card"><div class="stat-label">本周笔记</div><div class="stat-value" id="statNotes">—</div><div class="stat-delta" style="color:var(--notes)" id="statNotesDelta">—</div></div>
+            <div class="stat-card"><div class="stat-label">周报单元</div><div class="stat-value" id="statBuckets">—</div><div class="stat-delta" id="statBucketsDelta">—</div></div>
+            <div class="stat-card"><div class="stat-label">预估 Token</div><div class="stat-value" style="font-size:var(--text-xl)" id="statTokens">—</div><div class="stat-delta">commit + 笔记合计</div></div>
+          </div>
+          <div class="card" style="margin-bottom:var(--s6)">
+            <div class="card-header"><h3>快速记一笔</h3><span class="badge badge-notes">补全非代码工作</span></div>
+            <p style="font-size:var(--text-sm);color:var(--muted);margin-bottom:var(--s4)">会议、沟通、方案设计、技术调研……这些工作不在 commit 里，记一条笔记，生成周报时会自动融合。</p>
+            <div class="note-quick-add" style="margin-bottom:0;border:none;padding:0">
+              <div class="field note-text"><label class="field-label">笔记内容</label>
+                <input type="text" class="input" id="dashNoteInput" placeholder="例如：参加架构评审，确认了订单服务拆分方案" /></div>
+              <div class="field" style="min-width:160px"><label class="field-label">关联项目</label>
+                <select class="select" id="dashNoteProject"><option value="">日常工作（通用）</option></select></div>
+              <button class="btn btn-notes" id="dashNoteBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>添加笔记</button>
+            </div>
+            <div id="dashNoteToast" style="display:none;margin-top:var(--s3);font-size:var(--text-xs);color:var(--success);font-family:var(--font-mono)"></div>
+          </div>
+          <div class="card" style="margin-bottom:var(--s6)">
+            <div class="card-header"><h3>一键生成</h3><span class="badge badge-success" id="readyBadge">就绪</span></div>
+            <div style="display:flex;gap:var(--s3);flex-wrap:wrap">
+              <button class="btn btn-primary btn-lg" id="goGen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>生成本周周报</button>
+              <button class="btn btn-secondary btn-lg" id="goDaily"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>生成今日日报</button>
+              <button class="btn btn-secondary" id="goDryRun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Dry-Run 预览</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>最近生成</h3></div>
+            <div id="dashRecent" class="empty">暂无记录</div>
+          </div>
+        </div>
+
+        <!-- 生成周报/日报 -->
+        <div id="page-generate" class="page">
+          <div class="page-header"><h2>生成报告</h2><p>commit 与人工笔记融合，一键产出结构化工作周报 / 日报</p></div>
+          <div class="gen-panel">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--s3)">
+              <div><label class="field-label" style="display:block;margin-bottom:var(--s2)">报告类型</label>
+                <div class="mode-switch">
+                  <button class="active" id="modeWeekly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>周报</button>
+                  <button id="modeDaily"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>日报</button>
+                </div></div>
+              <div id="dailyOptions" style="display:none;flex:1;max-width:320px">
+                <div class="field"><label class="field-label">日期</label>
+                  <select class="select" id="dailyDate"><option value="today">今天</option><option value="yesterday">昨天</option></select></div>
+              </div>
+            </div>
+          </div>
+          <div class="gen-panel" id="weeklyRangePanel">
+            <h3 style="font-size:var(--text-base);font-weight:600;margin-bottom:var(--s5)">时间范围</h3>
+            <div class="filter-bar" id="rangeChips">
+              <button class="filter-chip active" data-range="thisweek">本周</button>
+              <button class="filter-chip" data-range="lastweek">上周</button>
+              <button class="filter-chip" data-range="custom">自定义</button>
+            </div>
+            <div class="field-row">
+              <div class="field"><label class="field-label">起始日期</label><input type="date" class="input" id="genFrom" /></div>
+              <div class="field"><label class="field-label">结束日期</label><input type="date" class="input" id="genTo" /></div>
+              <div class="field"><label class="field-label">周起始日</label><select class="select" id="genWeekStart"><option value="monday">周一（默认）</option><option value="sunday">周日</option></select></div>
+            </div>
+          </div>
+          <div class="gen-panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--s5)">
+              <h3 style="font-size:var(--text-base);font-weight:600">信息源融合</h3>
+              <label class="toggle"><input type="checkbox" id="notesToggle" checked /><span class="toggle-track"></span></label>
+            </div>
+            <div class="fusion-summary">
+              <div class="fusion-box commits"><h4>代码提交（Commit）</h4><p><span class="fusion-num" id="fusionCommits">—</span> 条</p><p style="margin-top:var(--s2);font-size:var(--text-xs)" id="fusionCommitsDesc">采集后显示</p></div>
+              <div class="fusion-box notes" id="fusionNotesBox"><h4>人工笔记（Note）</h4><p><span class="fusion-num" id="fusionNotes">—</span> 条</p><p style="margin-top:var(--s2);font-size:var(--text-xs)" id="fusionNotesDesc">采集后显示</p></div>
+            </div>
+            <div class="callout notes-callout" style="margin-top:var(--s4)"><p><strong>融合规则：</strong>带项目标签的笔记 → 对应项目桶；通用笔记 → 注入当天所有桶作补充上下文，同时作为【日常工作】独立段落兜底。两类信息源由 AI 统一归纳为 3–5 句总结。</p></div>
+            <div style="margin-top:var(--s4)"><button class="btn btn-secondary btn-sm" id="refreshFusion">刷新采集预览</button></div>
+          </div>
+          <div class="gen-panel">
+            <h3 style="font-size:var(--text-base);font-weight:600;margin-bottom:var(--s4)">仓库与过滤</h3>
+            <div class="field-row">
+              <div class="field"><label class="field-label">作者过滤</label><input type="text" class="input" id="genAuthor" placeholder="留空=全部，输入邮箱或勾选仅本人" /></div>
+              <div class="field"><label class="field-label">Merge Commit</label><select class="select" id="genMerge"><option value="exclude">排除（推荐）</option><option value="include">包含</option><option value="only">仅 Merge</option></select></div>
+              <div class="field"><label class="field-label">输出格式</label><select class="select" id="genFormat"><option value="text">text（默认）</option><option value="md">md</option><option value="json">json</option></select></div>
+            </div>
+          </div>
+          <div class="gen-actions" style="margin-bottom:var(--s6)">
+            <button class="btn btn-primary btn-lg" id="generateBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>生成报告</button>
+            <button class="btn btn-secondary" id="dryRunBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Dry-Run 预览</button>
+            <span id="genStatus" style="font-size:var(--text-xs);color:var(--muted);font-family:var(--font-mono)"></span>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>报告预览</h3>
+              <div style="display:flex;gap:var(--s2)">
+                <button class="btn btn-secondary btn-sm" id="copyBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>复制</button>
+                <button class="btn btn-secondary btn-sm" id="exportBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>导出</button>
+              </div>
+            </div>
+            <div class="report-preview" id="reportPreview"><span style="color:var(--muted)">点击「生成报告」后此处显示结果…</span></div>
+          </div>
+        </div>
+
+        <!-- 今日日报 -->
+        <div id="page-daily" class="page">
+          <div class="page-header"><h2>今日日报</h2><p>单天 commit + 笔记融合，适合日终快速小结</p></div>
+          <div class="gen-panel">
+            <div class="field-row" style="margin-bottom:var(--s5)">
+              <div class="field"><label class="field-label">日期</label><select class="select" id="dailyPageDate"><option value="today">今天</option><option value="yesterday">昨天</option></select></div>
+              <div class="field"><label class="field-label">无 commit 处理</label><select class="select" id="dailyNoCommits"><option value="1">有笔记仍生成（--no-commits-ok）</option><option value="0">提示无记录</option></select></div>
+              <div class="field"><label class="field-label">输出格式</label><select class="select" id="dailyFormat"><option value="text">text（默认）</option><option value="md">md</option><option value="json">json</option></select></div>
+            </div>
+            <div class="callout notes-callout" style="margin-bottom:var(--s5)"><p><strong>纯笔记日报：</strong>今天如果只开会没写代码，开启「有笔记仍生成」，会基于笔记产出【日常工作】段——非代码工作一样能形成日报。</p></div>
+            <div class="gen-actions">
+              <button class="btn btn-primary btn-lg" id="dailyGenBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>生成日报</button>
+              <button class="btn btn-notes" id="dailyGoNote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>先记一笔</button>
+              <span id="dailyStatus" style="font-size:var(--text-xs);color:var(--muted);font-family:var(--font-mono)"></span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>日报预览</h3><span class="badge badge-notes" id="dailyMetaBadge">—</span></div>
+            <div class="report-preview" id="dailyPreview"><span style="color:var(--muted)">点击「生成日报」后此处显示结果…</span></div>
+          </div>
+        </div>
+
+        <!-- 笔记管理 -->
+        <div id="page-notes" class="page">
+          <div class="page-header"><h2>笔记管理</h2><p>补充会议、沟通、设计、调研等非代码工作 · notes/YYYY-MM-DD.md</p></div>
+          <div class="note-quick-add">
+            <div class="field note-text"><label class="field-label">添加笔记</label>
+              <input type="text" class="input" id="noteInput" placeholder="例如：参加架构评审，确认了订单服务拆分方案" /></div>
+            <div class="field" style="min-width:150px"><label class="field-label">项目</label>
+              <select class="select" id="noteProject"><option value="">日常工作（通用）</option></select></div>
+            <div class="field" style="min-width:140px"><label class="field-label">日期</label><input type="date" class="input" id="noteDate" /></div>
+            <button class="btn btn-notes" id="noteAddBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>添加</button>
+            <button class="btn btn-secondary" id="noteEditorBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>编辑器打开</button>
+          </div>
+          <div class="filter-bar">
+            <button class="filter-chip active" data-notefilter="all">全部</button>
+            <button class="filter-chip" data-notefilter="project">项目笔记</button>
+            <button class="filter-chip" data-notefilter="misc">日常工作（通用）</button>
+            <div style="margin-left:auto;display:flex;gap:var(--s2);align-items:center">
+              <input type="date" class="input" id="noteFrom" style="width:auto" /><span style="color:var(--muted)">~</span><input type="date" class="input" id="noteTo" style="width:auto" />
+              <button class="btn btn-secondary btn-sm" id="noteRefresh">刷新</button>
+            </div>
+          </div>
+          <div id="notesTimeline" class="empty">加载中…</div>
+          <div class="card" style="margin-top:var(--s8)">
+            <div class="card-header"><h3>笔记文件原始格式</h3><span class="badge badge-muted" id="noteFileBadge" style="font-family:var(--font-mono)">notes/.md</span></div>
+            <div class="code-block" id="noteRawPreview"><span class="md-h2" style="color:#c4b5fd">## 某某系统前端</span>
+具体工作描述…
+
+<span class="md-h2" style="color:#c4b5fd">## 日常工作</span>
+通用笔记内容…</div>
+            <p style="font-size:var(--text-xs);color:var(--muted);margin-top:var(--s3)">规则：<code class="inline">## 项目名</code> 下的内容归该项目桶；<code class="inline">## 日常工作</code>（或顶部无标题）归当天通用笔记，注入所有桶 + 独立段落。</p>
+          </div>
+        </div>
+
+        <!-- 仓库管理 -->
+        <div id="page-repos" class="page">
+          <div class="page-header"><h2>仓库管理</h2><p>注册和管理本地 Git 仓库，配置项目名称与采集策略</p></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--s5)">
+            <span style="font-size:var(--text-sm);color:var(--muted)" id="repoCount">0 个已注册仓库</span>
+            <button class="btn btn-primary btn-sm" id="addRepoBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>添加仓库</button>
+          </div>
+          <div id="repoList"></div>
+        </div>
+
+        <!-- 历史记录 -->
+        <div id="page-history" class="page">
+          <div class="page-header"><h2>历史记录</h2><p>查看和导出历史生成的周报 / 日报</p></div>
+          <div class="card">
+            <div class="table-wrap">
+              <table class="ds-table">
+                <thead><tr><th>时间</th><th>类型</th><th>范围</th><th>仓库</th><th>笔记</th><th>摘要</th><th>状态</th><th></th></tr></thead>
+                <tbody id="historyBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 设置 -->
+        <div id="page-settings" class="page">
+          <div class="page-header"><h2>AI 与输出设置</h2><p>配置 LLM 后端、笔记、输出格式、并发与容错策略</p></div>
+
+          <div class="card" style="margin-bottom:var(--s6);border-left:3px solid var(--notes)">
+            <div class="card-header"><h3>笔记配置</h3><span class="badge badge-notes">v1.1</span></div>
+            <div class="field-row">
+              <div class="field"><label class="field-label">笔记目录</label>
+                <div style="display:flex;gap:var(--s2)"><input type="text" class="input" id="setNotesDir" placeholder="留空=默认（应用数据目录/notes）" style="flex:1" /><button class="btn btn-secondary" id="pickNotesDir">浏览</button></div>
+                <span class="field-hint">相对应用数据目录，或填绝对路径。当前：<code class="inline" id="curNotesDir">—</code></span></div>
+              <div class="field"><label class="field-label">通用项目名（miscProject）</label><input type="text" class="input" id="setMiscProject" value="日常工作" /></div>
+            </div>
+            <div class="toggle-row"><div class="toggle-info"><h4>启用笔记融合</h4><p>关闭后仅基于 commit 生成</p></div><label class="toggle"><input type="checkbox" id="setNotesEnabled" checked /><span class="toggle-track"></span></label></div>
+            <div class="callout notes-callout" style="margin-top:var(--s4)"><p><strong>隐私提示：</strong>笔记往往含更敏感业务信息。commit 与笔记一并受脱敏规则约束，可指向私有网关实现数据不出内网。</p></div>
+          </div>
+
+          <div class="card" style="margin-bottom:var(--s6)">
+            <div class="card-header"><h3>AI 提供商</h3><span class="badge" id="apiKeyBadge">检测中</span></div>
+            <div class="provider-grid">
+              <div class="provider-card" id="provAnthropic" data-provider="anthropic"><div style="display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s2)"><div style="width:32px;height:32px;background:var(--fg);border-radius:8px;display:grid;place-items:center;color:var(--surface);font-weight:700">A</div><h4>Anthropic</h4></div><p>Claude 系列模型 · Messages API</p></div>
+              <div class="provider-card" id="provOpenai" data-provider="openai"><div style="display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s2)"><div style="width:32px;height:32px;background:var(--fg);border-radius:8px;display:grid;place-items:center;color:var(--surface);font-weight:700">O</div><h4>OpenAI</h4></div><p>GPT 系列模型 · Responses API</p></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label class="field-label">模型</label><input type="text" class="input" id="setModel" /></div>
+              <div class="field"><label class="field-label">API Base URL</label><input type="text" class="input" id="setBaseUrl" placeholder="留空用官方默认" /></div>
+            </div>
+            <div class="field" style="margin-top:var(--s4)">
+              <label class="field-label">API Key（软件内填写）</label>
+              <div style="display:flex;gap:var(--s2)">
+                <input type="password" class="input" id="setApiKey" placeholder="sk-...（留空则用环境变量）" style="flex:1" autocomplete="off" />
+                <button class="btn btn-secondary" type="button" id="toggleKeyVisibility">显示</button>
+                <button class="btn btn-secondary" type="button" id="clearApiKeyBtn">清除</button>
+              </div>
+              <span class="field-hint"><span id="keyHint">加密存储于系统钥匙串</span> · 环境变量 <code class="inline" id="keyEnvHint">ANTHROPIC_API_KEY</code></span>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom:var(--s6)">
+            <div class="card-header"><h3>生成参数</h3></div>
+            <div class="field-row">
+              <div class="field"><label class="field-label">Temperature：<span id="tempVal">0.3</span></label><input type="range" min="0" max="100" value="30" id="setTemp" style="accent-color:var(--accent)" /></div>
+              <div class="field"><label class="field-label">最大输出 Token</label><input type="number" class="input" id="setMaxOut" value="800" /></div>
+              <div class="field"><label class="field-label">最大输入 Token</label><input type="number" class="input" id="setMaxIn" value="6000" /></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label class="field-label">并发调用数</label><input type="number" class="input" id="setConcurrency" value="3" min="1" max="10" /></div>
+              <div class="field"><label class="field-label">重试次数</label><input type="number" class="input" id="setRetries" value="3" min="0" max="5" /></div>
+              <div class="field"><label class="field-label">超时（秒）</label><input type="number" class="input" id="setTimeout" value="60" min="10" max="300" /></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom:var(--s6)">
+            <div class="card-header"><h3>输出格式</h3></div>
+            <div class="field-row">
+              <div class="field"><label class="field-label">默认格式</label><select class="select" id="setFormat"><option value="text">text（推荐）</option><option value="md">md</option><option value="json">json</option></select></div>
+              <div class="field"><label class="field-label">换行符</label><select class="select" id="setNewline"><option value="CRLF">CRLF（Windows）</option><option value="LF">LF（macOS/Linux）</option></select></div>
+            </div>
+            <div class="toggle-row"><div class="toggle-info"><h4>附带 commit 列表</h4><p>摘要后附 shortHash 列表</p></div><label class="toggle"><input type="checkbox" id="setWithCommits" /><span class="toggle-track"></span></label></div>
+          </div>
+
+          <div class="gen-actions"><button class="btn btn-primary btn-lg" id="saveSettingsBtn">保存设置</button><span id="settingsToast" style="font-size:var(--text-xs);color:var(--success);font-family:var(--font-mono)"></span></div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <span class="status-dot" id="statusDot"></span><span id="statusText">初始化…</span>
+      <span class="badge badge-notes" id="statusNotes" style="margin-left:8px;display:none">笔记已开启</span>
+      <span style="margin-left:auto" id="statusRight">—</span>
+    </div>
+  </div>
+
+  <!-- 添加仓库 -->
+  <div class="modal-overlay" id="addRepoModal">
+    <div class="modal">
+      <div class="modal-header"><h3>添加仓库</h3><button class="btn btn-ghost" id="closeAddRepo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+      <div class="modal-body">
+        <div class="field" style="margin-bottom:var(--s4)"><label class="field-label">仓库路径</label>
+          <div style="display:flex;gap:var(--s2)"><input type="text" class="input" id="repoPathInput" placeholder="F:/code/my-project" style="flex:1" /><button class="btn btn-secondary" id="repoBrowse">浏览</button></div>
+          <span class="field-hint" id="repoValidateHint">本地 Git 仓库绝对路径</span></div>
+        <div class="field-row" style="margin-bottom:var(--s4)">
+          <div class="field"><label class="field-label">项目名称</label><input type="text" class="input" id="repoNameInput" placeholder="聚合标识（稳定，建议英文）" /><span class="field-hint">用于聚合与笔记匹配</span></div>
+          <div class="field"><label class="field-label">别名（日报显示）</label><input type="text" class="input" id="repoAliasInput" placeholder="如：订单服务后端（留空用项目名）" /></div>
+        </div>
+        <div class="field"><label class="field-label">默认分支</label><input type="text" class="input" id="repoBranchInput" value="main" /></div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-secondary" id="cancelAddRepo">取消</button><button class="btn btn-primary" id="confirmAddRepo">确认添加</button></div>
+    </div>
+  </div>
+
+  <!-- 笔记编辑器 -->
+  <div class="modal-overlay" id="noteEditorModal">
+    <div class="modal" style="width:640px">
+      <div class="modal-header"><h3>编辑笔记 · <span id="editorFile">notes/.md</span></h3><button class="btn btn-ghost" id="closeNoteEditor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+      <div class="modal-body">
+        <p style="font-size:var(--text-xs);color:var(--muted);margin-bottom:var(--s3)">用 <code class="inline">## 项目名</code> 分段；标题之上或 <code class="inline">## 日常工作</code> 下为通用笔记。</p>
+        <div class="field"><label class="field-label">日期</label><input type="date" class="input" id="editorDate" style="max-width:200px;margin-bottom:var(--s3)" /></div>
+        <textarea class="input" id="editorText" style="min-height:260px;font-family:var(--font-mono);font-size:var(--text-sm)"></textarea>
+      </div>
+      <div class="modal-footer"><button class="btn btn-secondary" id="cancelNoteEditor">取消</button><button class="btn btn-notes" id="saveNoteEditor">保存</button></div>
+    </div>
+  </div>
+
+  <!-- Dry-Run -->
+  <div class="modal-overlay" id="dryRunModal">
+    <div class="modal" style="width:560px">
+      <div class="modal-header"><h3>Dry-Run 预览</h3><button class="btn btn-ghost" id="closeDryRun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--s4);margin-bottom:var(--s5)">
+          <div class="stat-card"><div class="stat-label">周报单元</div><div class="stat-value" style="font-size:var(--text-xl)" id="dryBuckets">—</div><div class="stat-delta" id="dryBucketsDelta">—</div></div>
+          <div class="stat-card"><div class="stat-label">预估 Token</div><div class="stat-value" style="font-size:var(--text-xl)" id="dryTokens">—</div><div class="stat-delta" id="dryTokensDelta">—</div></div>
+        </div>
+        <div class="code-block" id="dryDetail">采集中…</div>
+        <p style="font-size:var(--text-xs);color:var(--muted);margin-top:var(--s3)">此预览不调用 AI，仅展示将发送内容（含笔记）的概要。</p>
+      </div>
+      <div class="modal-footer"><button class="btn btn-secondary" id="closeDryRun2">关闭</button><button class="btn btn-primary" id="dryConfirm">确认生成</button></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
