@@ -1,0 +1,67 @@
+name: Release
+
+# 推送 v* 形式的 tag（即发布版本）时触发
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # 上传构建产物到 GitHub Release 需要
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false # 一个平台失败不取消另一个
+      matrix:
+        include:
+          # Windows x64：NSIS 安装包
+          - os: windows-latest
+            dist_script: dist:win
+          # macOS arm64：dmg + zip（macos-14 为 Apple Silicon）
+          - os: macos-14
+            dist_script: dist:mac
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build & package app
+        # dist:win / dist:mac 脚本已内含 build:renderer（Vite 打包渲染层）
+        run: npm run ${{ matrix.dist_script }}
+        env:
+          # electron-builder 自动更新元信息（latest*.yml）需要；此处仅打包
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts to workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: weeklog-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*-mac.zip
+            release/latest*.yml
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+            release/*.dmg
+            release/*-mac.zip
+            release/latest*.yml
+          fail_on_unmatched_files: false
