@@ -3,17 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- CSP：Electron file:// 加载，允许 file: 资源 + 内联样式（Tailwind/shadcn 注入） -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self' file:; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self' file: 'unsafe-inline'"
     />
-    <title>WeekLog — Git 周报/日报生成工具</title>
-    <!-- 防闪烁：在 React 之前同步设置 dark class（读 localStorage 缓存） -->
+    <title>快速记笔记</title>
     <script src="./theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="./src/main.tsx"></script>
+    <script type="module" src="./src/quicknote.tsx"></script>
   </body>
 </html>
