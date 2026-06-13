@@ -50,4 +50,23 @@ contextBridge.exposeInMainWorld('weeklog', {
     pickFolder: () => ipcRenderer.invoke('dialog:pickFolder'),
     pickRepo: () => ipcRenderer.invoke('dialog:pickRepo'),
   },
+  ui: {
+    /** 同步原生外观（标题栏/窗口底色），返回当前是否深色 */
+    setTheme: (theme) => ipcRenderer.invoke('ui:setTheme', theme),
+  },
+  shortcut: {
+    /** 读取已保存配置并重新注册全局快捷键，返回 { ok, accel } */
+    apply: () => ipcRenderer.invoke('shortcut:apply'),
+    /** 录制快捷键时临时停用，避免按下当前组合键时触发弹窗 */
+    suspend: () => ipcRenderer.invoke('shortcut:suspend'),
+    resume: () => ipcRenderer.invoke('shortcut:resume'),
+  },
+  quicknote: {
+    hide: () => ipcRenderer.send('quicknote:hide'),
+    onShow: (cb) => {
+      const handler = () => cb()
+      ipcRenderer.on('quicknote:show', handler)
+      return () => ipcRenderer.removeListener('quicknote:show', handler)
+    },
+  },
 })

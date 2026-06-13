@@ -1,0 +1,198 @@
+/**
+ * window.weeklog 桥接 API 的类型定义。
+ * 严格对应 src/preload/index.js 通过 contextBridge 暴露的能力，作为重构期契约文档。
+ */
+
+export interface Repo {
+  id: string
+  path: string
+  name: string
+  alias?: string
+  branch: string
+  enabled: boolean
+  author?: string
+}
+
+export interface AiSubConfig {
+  model: string
+  baseUrl: string
+  temperature: number
+  maxTokens: number
+}
+
+export interface Config {
+  schemaVersion: number
+  weekStart: 'monday' | 'sunday'
+  timezone: string
+  dateBasis: 'author' | 'committer'
+  repos: Repo[]
+  filters: {
+    author: string[]
+    mergeCommits: 'exclude' | 'include' | 'only'
+    excludeGrep: string[]
+  }
+  notes: {
+    enabled: boolean
+    miscProject: string
+    dir?: string
+  }
+  ui: {
+    theme: 'auto' | 'light' | 'dark'
+    quickNoteShortcut: string
+  }
+  ai: {
+    provider: 'openai' | 'anthropic'
+    maxInputTokens: number
+    concurrency: number
+    retries: number
+    timeoutSeconds: number
+    anthropic: AiSubConfig
+    openai: AiSubConfig
+  }
+  output: {
+    format: 'text' | 'md' | 'json'
+    newline: 'CRLF' | 'LF'
+    withCommits: boolean
+    showNotes: boolean
+  }
+}
+
+export interface Note {
+  date: string
+  project: string | null
+  content: string
+  source: string
+}
+
+export interface CollectStats {
+  commitCount: number
+  noteCount: number
+  noteProjectCount: number
+  noteMiscCount: number
+  bucketCount: number
+  notesOnlyCount: number
+  days: number
+  estTokens: number
+  repoErrors: { repo: string; error: string }[]
+}
+
+export interface CollectResult {
+  stats: CollectStats
+  range: { from: string; to: string; timezone?: string }
+}
+
+export interface GenerateRangeOpts {
+  mode?: 'daily'
+  date?: string
+  week?: 'current' | 'last' | string
+  from?: string
+  to?: string
+}
+
+export interface GenerateOptions {
+  noNotes?: boolean
+  format?: 'text' | 'md' | 'json'
+  author?: string
+  merge?: 'exclude' | 'include' | 'only'
+  weekStart?: 'monday' | 'sunday'
+}
+
+export interface GenerateProgress {
+  done: number
+  total: number
+  project: string
+}
+
+export interface ReportMeta {
+  commitCount?: number
+  noteCount?: number
+  bucketCount?: number
+  durationMs?: number
+  failedUnits?: string[]
+}
+
+export interface Report {
+  text?: string
+  error?: string
+  meta?: ReportMeta
+  rangeStart?: string
+  rangeEnd?: string
+  failedUnits: string[]
+}
+
+export interface HistoryEntry {
+  id: string
+  createdAt: string
+  type: '周报' | '日报'
+  rangeStart: string
+  rangeEnd: string
+  text: string
+  meta: ReportMeta
+}
+
+export interface SecretsResult {
+  key: string
+  available: boolean
+}
+
+export interface WeeklogAPI {
+  config: {
+    get: () => Promise<Config>
+    save: (cfg: Config) => Promise<Config>
+    reset: () => Promise<Config>
+    notesDir: () => Promise<string>
+  }
+  env: {
+    gitOk: () => Promise<boolean>
+    apiKeyStatus: () => Promise<boolean>
+  }
+  secrets: {
+    available: () => Promise<boolean>
+    get: (provider: 'openai' | 'anthropic') => Promise<SecretsResult>
+    set: (provider: 'openai' | 'anthropic', key: string) => Promise<void>
+    clear: (provider: 'openai' | 'anthropic') => Promise<void>
+  }
+  repo: {
+    validate: (p: string) => Promise<{ ok: boolean; branch: string }>
+    add: (r: { path: string; name?: string; branch?: string; alias?: string }) => Promise<{ repo?: Repo; error?: string }>
+    update: (id: string, patch: Partial<Repo>) => Promise<Config>
+    remove: (id: string) => Promise<Config>
+  }
+  notes: {
+    add: (n: { date: string; project: string; content: string }) => Promise<{ file: string }>
+    getText: (date: string) => Promise<string>
+    saveText: (n: { date: string; text: string }) => Promise<{ ok: boolean }>
+    list: (q: { from: string; to: string }) => Promise<Note[]>
+  }
+  collect: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<CollectResult>
+  generate: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<Report>
+  onProgress: (cb: (m: GenerateProgress) => void) => () => void
+  history: {
+    list: () => Promise<HistoryEntry[]>
+    save: (e: Omit<HistoryEntry, 'id' | 'createdAt'>) => Promise<HistoryEntry>
+  }
+  dialog: {
+    pickFolder: () => Promise<string | null>
+    pickRepo: () => Promise<string | null>
+  }
+  ui: {
+    setTheme: (theme: 'auto' | 'light' | 'dark') => Promise<boolean>
+  }
+  shortcut: {
+    apply: () => Promise<{ ok: boolean; accel: string }>
+    suspend: () => Promise<boolean>
+    resume: () => Promise<boolean>
+  }
+  quicknote: {
+    hide: () => void
+    onShow: (cb: () => void) => () => void
+  }
+}
+
+declare global {
+  interface Window {
+    weeklog: WeeklogAPI
+  }
+}
+
+export {}

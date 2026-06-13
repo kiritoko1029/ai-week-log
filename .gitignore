@@ -7,3 +7,10 @@ out/
 Thumbs.db
 .vscode/
 .idea/
+.claude/
+.codex/
+.od-skills/
+*.artifact.json
+ee_app.log
+ee.log
+eo.log
