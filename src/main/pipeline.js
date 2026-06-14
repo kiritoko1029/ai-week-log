@@ -202,6 +202,25 @@ async function generate({ cfg, apiKey, rangeOpts = {}, notesDir, options = {}, o
     showNotes: options.showNotes ?? (cfg.output && cfg.output.showNotes) ?? false,
     newline: options.newline || (cfg.output && cfg.output.newline),
   })
+
+  // ── AI 记忆：报告成功后异步生成一条记忆（不阻塞返回）──
+  try {
+    const memCfg = cfg.memory
+    const userDataDir = options.userDataDir
+    if (memCfg && memCfg.enabled && memCfg.autoGenerate && report.days.length && userDataDir && apiKey) {
+      const memory = require('./memory')
+      // fire-and-forget；失败只 warn
+      memory.buildMemoryEntry({ report, cfg, apiKey }).then((entry) => {
+        if (entry) {
+          memory.saveEntry(userDataDir, entry)
+          memory.enqueueEmbedding(userDataDir, cfg, entry.id)
+        }
+      }).catch((e) => console.warn('[weeklog] 记忆生成失败：', e.message))
+    }
+  } catch (e) {
+    console.warn('[weeklog] 记忆模块加载失败：', e.message)
+  }
+
   return report
 }
 

@@ -3,6 +3,7 @@ import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
 import { cn } from '@/lib/utils'
 import { GitBranch, KeyRound } from 'lucide-react'
+import { TaskIndicator } from '@/components/TaskIndicator'
 
 export function Statusbar() {
   const { config } = useConfig()
@@ -51,7 +52,10 @@ export function Statusbar() {
           <span className="text-violet-500 dark:text-violet-400">笔记已开启</span>
         </>
       )}
-      <span className="ml-auto">WeekLog v1.1.0</span>
+      <span className="ml-auto flex items-center gap-3">
+        <TaskIndicator />
+        <span>WeekLog v1.2.0</span>
+      </span>
     </footer>
   )
 }

@@ -56,6 +56,21 @@ function defaultConfig() {
       withCommits: false,
       showNotes: false,
     },
+    webdav: {
+      enabled: false,
+      url: '', // 如 https://dav.example.com/weeklog/
+      username: '',
+      autoSync: 'both', // off | pull | push | both（启动拉取/退出推送）
+      // password 不落盘，走 secrets.js 加密存储（provider='webdav'）
+    },
+    memory: {
+      enabled: true,
+      embeddingSource: 'local', // local | api
+      embeddingModel: 'Xenova/multilingual-e5-small',
+      modelSource: 'auto', // auto | huggingface | modelscope（auto 优先 modelscope，国内更快）
+      autoGenerate: true, // 报告生成后自动产出记忆
+      topK: 5, // 检索时注入 LLM 的记忆条数上限
+    },
   }
 }
 

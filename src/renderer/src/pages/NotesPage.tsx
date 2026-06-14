@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Plus, Pencil, RefreshCw, Loader2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { Plus, Pencil, RefreshCw, Loader2, Lightbulb } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import type { Note } from '@/types/weeklog'
+import type { Note, MemoryInferResult } from '@/types/weeklog'
 
 type Filter = 'all' | 'project' | 'misc'
 
@@ -42,6 +42,11 @@ export function NotesPage() {
   const [rawText, setRawText] = useState('')
   const [rawDate, setRawDate] = useState(todayISO())
 
+  // AI 记忆推断（写笔记时辅助）
+  const [inferResult, setInferResult] = useState<MemoryInferResult | null>(null)
+  const [inferring, setInferring] = useState(false)
+  const inferTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const loadNotes = useCallback(async () => {
     setLoading(true)
     try {
@@ -57,6 +62,31 @@ export function NotesPage() {
   useEffect(() => {
     loadNotes()
   }, [loadNotes])
+
+  // AI 记忆推断：用户输入笔记时（debounce 800ms），调记忆推断项目
+  useEffect(() => {
+    if (inferTimer.current) clearTimeout(inferTimer.current)
+    const text = noteText.trim()
+    // 记忆未启用或输入太短：清空提示
+    if (!config?.memory?.enabled || text.length < 4) {
+      setInferResult(null)
+      return
+    }
+    inferTimer.current = setTimeout(async () => {
+      setInferring(true)
+      try {
+        const r = await api.memory.inferProject(text)
+        setInferResult(r)
+      } catch {
+        setInferResult(null)
+      } finally {
+        setInferring(false)
+      }
+    }, 800)
+    return () => {
+      if (inferTimer.current) clearTimeout(inferTimer.current)
+    }
+  }, [noteText, config?.memory?.enabled])
 
   const refreshRaw = useCallback(async (d: string) => {
     try {
@@ -174,6 +204,42 @@ export function NotesPage() {
               编辑器打开
             </Button>
           </div>
+
+          {/* AI 记忆推断提示 */}
+          {(inferring || (inferResult && inferResult.project && inferResult.confidence > 0.3)) && (
+            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-amber-300/60 bg-amber-50/80 p-3 dark:border-amber-700/50 dark:bg-amber-950/30">
+              <Lightbulb className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              {inferring ? (
+                <span className="text-sm text-muted-foreground">
+                  <Loader2 className="mr-1 inline size-3 animate-spin" />
+                  正在检索历史记忆，推断相关项目…
+                </span>
+              ) : inferResult && inferResult.project ? (
+                <>
+                  <span className="text-sm">
+                    根据历史记忆，这可能与
+                    <strong className="mx-1 text-amber-700 dark:text-amber-300">【{inferResult.project}】</strong>
+                    相关（置信度 {Math.round((inferResult.confidence || 0) * 100)}%）
+                    {inferResult.suggestedSummary && (
+                      <span className="text-muted-foreground"> · {inferResult.suggestedSummary}</span>
+                    )}
+                  </span>
+                  {!noteProject && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      type="button"
+                      onClick={() => {
+                        if (inferResult.project) setNoteProject(inferResult.project)
+                      }}
+                    >
+                      归入该项目
+                    </Button>
+                  )}
+                </>
+              ) : null}
+            </div>
+          )}
         </CardContent>
       </Card>
 

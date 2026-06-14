@@ -18,6 +18,9 @@ const { checkGit, isGitRepo, currentBranch } = require('./git')
 const notes = require('./notes')
 const secrets = require('./secrets')
 const { collect, generate } = require('./pipeline')
+const webdav = require('./webdav')
+const memory = require('./memory')
+const tasks = require('./tasks')
 
 const HISTORY_FILE = 'history.json'
 
@@ -54,6 +57,48 @@ function registerIpc({ app, getMainWindow }) {
     if (d) return path.join(userDataDir, d)
     return path.join(userDataDir, 'notes')
   }
+
+  // 后台任务推送：转发到渲染进程 'task:update' 通道
+  tasks.setSender((payload) => {
+    const win = getMainWindow()
+    if (win && !win.isDestroyed()) {
+      try { win.webContents.send('task:update', payload) } catch {}
+    }
+  })
+
+  // 模型下载进度 → 推送到任务系统
+  memory.setModelProgressCallback((info) => {
+    // 把模型下载事件转为 task 事件
+    if (info.phase === 'start') {
+      // 不重复创建：若已有同 kind 的 running 任务，复用
+      const existing = tasks.list().find((t) => t.kind === 'model_dl' && t.status === 'running')
+      if (existing) {
+        tasks.update(existing.id, { detail: `正在从 ${info.source} 下载 ${info.model}` })
+      } else {
+        tasks.create('model_dl', '下载 Embedding 模型', {
+          detail: `正在从 ${info.source === 'modelscope' ? '魔搭社区' : 'HuggingFace'} 下载 ${info.model}`,
+          progress: { done: 0, total: 100, label: '准备中' },
+        })
+      }
+    } else if (info.phase === 'downloading') {
+      const existing = tasks.list().find((t) => t.kind === 'model_dl' && t.status === 'running')
+      if (existing) {
+        tasks.update(existing.id, {
+          progress: {
+            done: info.progress || 0,
+            total: 100,
+            label: info.file ? `${info.file}（${info.progress || 0}%）` : `${info.progress || 0}%`,
+          },
+        })
+      }
+    } else if (info.phase === 'complete') {
+      const existing = tasks.list().find((t) => t.kind === 'model_dl' && t.status === 'running')
+      if (existing) tasks.done(existing.id, { model: info.model })
+    } else if (info.phase === 'error') {
+      const existing = tasks.list().find((t) => t.kind === 'model_dl' && t.status === 'running')
+      if (existing) tasks.error(existing.id, info.error || '模型下载失败')
+    }
+  })
 
   // ── 配置 ──
   ipcMain.handle('config:get', () => getConfig())
@@ -133,24 +178,51 @@ function registerIpc({ app, getMainWindow }) {
     collect({ cfg: getConfig(), rangeOpts: rangeOpts || {}, notesDir: getNotesDir(), options: options || {} })
   )
 
+  // ── 采集 / 生成 ──
+  ipcMain.handle('collect', (_e, { rangeOpts, options }) =>
+    collect({ cfg: getConfig(), rangeOpts: rangeOpts || {}, notesDir: getNotesDir(), options: options || {} })
+  )
+
+  // 生成报告：返回 { taskId } + 通过 task:update 推送进度，跨页面保持状态
+  // 同时保留 generate:progress 事件（兼容现有 hook）
   ipcMain.handle('generate', async (event, { rangeOpts, options }) => {
     const cfg = getConfig()
     const { key, has, envName } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
     if (!has) {
       return { error: `未设置 ${cfg.ai.provider} 的 API Key（请在「AI 与输出设置」中填写，或配置环境变量 ${envName}）` }
     }
+    const reportType = (options && options._reportType) || '报告'
+    const taskId = tasks.create('generate', `生成${reportType}`, {
+      detail: '采集 commit + 加载笔记…',
+      progress: { done: 0, total: 0, label: '采集中' },
+    })
     const report = await generate({
       cfg,
       apiKey: key,
       rangeOpts: rangeOpts || {},
       notesDir: getNotesDir(),
-      options: options || {},
+      options: { ...options, userDataDir },
       onProgress: (msg) => {
-        try {
-          event.sender.send('generate:progress', msg)
-        } catch {}
+        // 1) 兼容旧事件
+        try { event.sender.send('generate:progress', msg) } catch {}
+        // 2) 更新任务系统
+        tasks.update(taskId, {
+          detail: `AI 融合生成中… ${msg.done}/${msg.total}（${msg.project}）`,
+          progress: { done: msg.done, total: msg.total, label: msg.project || '' },
+        })
       },
     })
+    if (report.error) {
+      tasks.error(taskId, report.error)
+    } else {
+      const m = report.meta || {}
+      tasks.done(taskId, {
+        commitCount: m.commitCount,
+        noteCount: m.noteCount,
+        bucketCount: m.bucketCount,
+        durationMs: m.durationMs,
+      })
+    }
     return report
   })
 
@@ -174,6 +246,86 @@ function registerIpc({ app, getMainWindow }) {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
     return r.canceled ? null : r.filePaths[0]
   })
+
+  // ── WebDAV 同步 ──
+  ipcMain.handle('webdav:test', async (_e, { url, username, password }) => {
+    return webdav.testConnection({ url, username, password })
+  })
+  ipcMain.handle('webdav:syncNow', async (_e, { direction } = {}) => {
+    const cfg = getConfig()
+    const password = secrets.getKey(userDataDir, 'webdav')
+    const dir = direction || 'both'
+    const dirLabel = dir === 'both' ? '双向' : dir === 'pull' ? '拉取' : '推送'
+    const taskId = tasks.create('webdav', `WebDAV 同步（${dirLabel}）`, {
+      detail: '正在同步…',
+      progress: { done: 0, total: 0, label: dirLabel },
+    })
+    try {
+      const result = await webdav.syncAll({ cfg, dir: userDataDir, password, direction: dir })
+      tasks.done(taskId, { pulled: result.pulled, pushed: result.pushed })
+      return result
+    } catch (e) {
+      tasks.error(taskId, e.message || '同步失败')
+      throw e
+    }
+  })
+  ipcMain.handle('webdav:status', () => webdav.readStatus(userDataDir))
+  ipcMain.handle('webdav:savePassword', (_e, { password } = {}) => {
+    secrets.setKey(userDataDir, 'webdav', password)
+    return { ok: true }
+  })
+  ipcMain.handle('webdav:getPassword', () => ({
+    password: secrets.getKey(userDataDir, 'webdav'),
+    available: secrets.isAvailable(),
+  }))
+  ipcMain.handle('webdav:clearPassword', () => {
+    secrets.clearKey(userDataDir, 'webdav')
+    return { ok: true }
+  })
+
+  // ── AI 记忆 ──
+  ipcMain.handle('memory:list', () => memory.listIndex(userDataDir))
+  ipcMain.handle('memory:search', (_e, { query, topK } = {}) => {
+    const cfg = getConfig()
+    return memory.search(userDataDir, query, { topK, cfg })
+  })
+  ipcMain.handle('memory:queueStatus', () => memory.queueStatus())
+  ipcMain.handle('memory:rebuild', async () => {
+    const cfg = getConfig()
+    const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
+    if (!has) return { error: '未配置 AI API Key' }
+    const history = readHistory(userDataDir)
+    const taskId = tasks.create('memory', '重建 AI 记忆库', {
+      detail: `从 ${history.length} 份历史报告生成记忆…`,
+      progress: { done: 0, total: history.length, label: '处理中' },
+    })
+    try {
+      const result = await memory.rebuild(userDataDir, {
+        cfg, apiKey: key, history,
+        onProgress: (p) => tasks.update(taskId, {
+          progress: { done: p.done, total: p.total, label: `${p.done}/${p.total}` },
+        }),
+      })
+      tasks.done(taskId, result)
+      return result
+    } catch (e) {
+      tasks.error(taskId, e.message || '重建失败')
+      return { error: e.message }
+    }
+  })
+  ipcMain.handle('memory:delete', (_e, { id } = {}) => memory.deleteEntry(userDataDir, id))
+  ipcMain.handle('memory:inferProject', async (_e, { noteText } = {}) => {
+    const cfg = getConfig()
+    const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
+    if (!has) return { error: '未配置 AI API Key' }
+    return memory.inferProject(userDataDir, noteText, { cfg, apiKey: key })
+  })
+
+  // ── 后台任务管理 ──
+  ipcMain.handle('tasks:list', () => tasks.list())
+  ipcMain.handle('tasks:hasRunning', () => tasks.hasRunning())
+  ipcMain.handle('tasks:remove', (_e, { id } = {}) => { tasks.remove(id); return { ok: true } })
+  ipcMain.handle('tasks:clearFinished', () => { tasks.clearFinished(); return { ok: true } })
 }
 
 module.exports = { registerIpc }

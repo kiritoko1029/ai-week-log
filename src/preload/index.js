@@ -50,6 +50,33 @@ contextBridge.exposeInMainWorld('weeklog', {
     pickFolder: () => ipcRenderer.invoke('dialog:pickFolder'),
     pickRepo: () => ipcRenderer.invoke('dialog:pickRepo'),
   },
+  webdav: {
+    test: (url, username, password) => ipcRenderer.invoke('webdav:test', { url, username, password }),
+    syncNow: (direction) => ipcRenderer.invoke('webdav:syncNow', { direction }),
+    status: () => ipcRenderer.invoke('webdav:status'),
+    savePassword: (password) => ipcRenderer.invoke('webdav:savePassword', { password }),
+    getPassword: () => ipcRenderer.invoke('webdav:getPassword'),
+    clearPassword: () => ipcRenderer.invoke('webdav:clearPassword'),
+  },
+  memory: {
+    list: () => ipcRenderer.invoke('memory:list'),
+    search: (query, topK) => ipcRenderer.invoke('memory:search', { query, topK }),
+    queueStatus: () => ipcRenderer.invoke('memory:queueStatus'),
+    rebuild: () => ipcRenderer.invoke('memory:rebuild'),
+    remove: (id) => ipcRenderer.invoke('memory:delete', { id }),
+    inferProject: (noteText) => ipcRenderer.invoke('memory:inferProject', { noteText }),
+  },
+  tasks: {
+    list: () => ipcRenderer.invoke('tasks:list'),
+    hasRunning: () => ipcRenderer.invoke('tasks:hasRunning'),
+    remove: (id) => ipcRenderer.invoke('tasks:remove', { id }),
+    clearFinished: () => ipcRenderer.invoke('tasks:clearFinished'),
+    onUpdate: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('task:update', handler)
+      return () => ipcRenderer.removeListener('task:update', handler)
+    },
+  },
   ui: {
     /** 同步原生外观（标题栏/窗口底色），返回当前是否深色 */
     setTheme: (theme) => ipcRenderer.invoke('ui:setTheme', theme),

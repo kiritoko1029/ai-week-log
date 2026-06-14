@@ -55,6 +55,20 @@ export interface Config {
     withCommits: boolean
     showNotes: boolean
   }
+  webdav: {
+    enabled: boolean
+    url: string
+    username: string
+    autoSync: 'off' | 'pull' | 'push' | 'both'
+  }
+  memory: {
+    enabled: boolean
+    embeddingSource: 'local' | 'api'
+    embeddingModel: string
+    modelSource: 'auto' | 'huggingface' | 'modelscope'
+    autoGenerate: boolean
+    topK: number
+  }
 }
 
 export interface Note {
@@ -95,6 +109,7 @@ export interface GenerateOptions {
   author?: string
   merge?: 'exclude' | 'include' | 'only'
   weekStart?: 'monday' | 'sunday'
+  _reportType?: string
 }
 
 export interface GenerateProgress {
@@ -133,6 +148,84 @@ export interface HistoryEntry {
 export interface SecretsResult {
   key: string
   available: boolean
+}
+
+export interface WebdavTestResult {
+  ok: boolean
+  message: string
+}
+
+export interface WebdavSyncResult {
+  pulled: number
+  pushed: number
+  errors: string[]
+}
+
+export interface WebdavStatus {
+  lastSync?: string
+  direction?: string
+  durationMs?: number
+  pulled?: number
+  pushed?: number
+  errors?: string[]
+}
+
+export interface MemoryIndexItem {
+  id: string
+  date: string
+  project: string
+  keywords: string[]
+  digest: string
+  embeddingReady: boolean
+  updatedAt: string
+  createdAt: string
+}
+
+export interface MemorySearchHit {
+  id: string
+  date: string
+  project: string
+  digest: string
+  keywords: string[]
+  full: string
+  score: number
+}
+
+export interface MemoryInferResult {
+  project: string
+  confidence: number
+  reason?: string
+  suggestedSummary?: string
+  matches?: { project: string; date: string; digest: string; score: number }[]
+  error?: string
+}
+
+export interface MemoryQueueStatus {
+  pending: number
+  total: number
+  running: boolean
+}
+
+export type TaskKind = 'generate' | 'memory' | 'model_dl' | 'webdav' | 'custom'
+export type TaskStatus = 'running' | 'done' | 'error' | 'cancelled'
+
+export interface BackgroundTask {
+  id: string
+  kind: TaskKind
+  title: string
+  status: TaskStatus
+  progress: { done: number; total: number; label: string } | null
+  detail: string
+  error: string | null
+  result: unknown
+  createdAt: number
+  updatedAt: number
+}
+
+export interface TaskUpdatePayload {
+  type: 'update' | 'remove' | 'clear'
+  task?: BackgroundTask
+  id?: string
 }
 
 export interface WeeklogAPI {
@@ -174,6 +267,29 @@ export interface WeeklogAPI {
   dialog: {
     pickFolder: () => Promise<string | null>
     pickRepo: () => Promise<string | null>
+  }
+  webdav: {
+    test: (url: string, username: string, password: string) => Promise<WebdavTestResult>
+    syncNow: (direction: 'pull' | 'push' | 'both') => Promise<WebdavSyncResult>
+    status: () => Promise<WebdavStatus>
+    savePassword: (password: string) => Promise<{ ok: boolean }>
+    getPassword: () => Promise<{ password: string; available: boolean }>
+    clearPassword: () => Promise<{ ok: boolean }>
+  }
+  memory: {
+    list: () => Promise<MemoryIndexItem[]>
+    search: (query: string, topK?: number) => Promise<MemorySearchHit[]>
+    queueStatus: () => Promise<MemoryQueueStatus>
+    rebuild: () => Promise<{ generated: number; failed: number; error?: string }>
+    remove: (id: string) => Promise<{ ok: boolean }>
+    inferProject: (noteText: string) => Promise<MemoryInferResult>
+  }
+  tasks: {
+    list: () => Promise<BackgroundTask[]>
+    hasRunning: () => Promise<boolean>
+    remove: (id: string) => Promise<{ ok: boolean }>
+    clearFinished: () => Promise<{ ok: boolean }>
+    onUpdate: (cb: (payload: TaskUpdatePayload) => void) => () => void
   }
   ui: {
     setTheme: (theme: 'auto' | 'light' | 'dark') => Promise<boolean>

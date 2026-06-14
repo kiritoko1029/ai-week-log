@@ -5,6 +5,7 @@ import { App } from './App'
 import { ThemeProvider } from '@/hooks/useTheme'
 import { ConfigProvider } from '@/hooks/useConfig'
 import { NavProvider } from '@/hooks/useNav'
+import { TasksProvider } from '@/hooks/useTasks'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 
@@ -15,8 +16,10 @@ createRoot(root).render(
       <ConfigProvider>
         <TooltipProvider delayDuration={200}>
           <NavProvider>
-            <App />
-            <Toaster />
+            <TasksProvider>
+              <App />
+              <Toaster />
+            </TasksProvider>
           </NavProvider>
         </TooltipProvider>
       </ConfigProvider>

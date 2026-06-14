@@ -5,9 +5,9 @@
   "main": "src/main/index.js",
   "license": "MIT",
   "scripts": {
-    "start": "npm run build:renderer && electron .",
+    "start": "npm run build:renderer && node scripts/run-electron.js .",
     "dev:renderer": "vite",
-    "dev": "cross-env WEEKLOG_DEV=1 electron .",
+    "dev": "npm run build:renderer && cross-env WEEKLOG_DEV=1 node scripts/run-electron.js .",
     "build:renderer": "vite build",
     "typecheck": "tsc --noEmit",
     "dist:win": "npm run build:renderer && electron-builder --win --x64",
@@ -76,10 +76,12 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "include": "build/installer.nsh"
     }
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@radix-ui/react-dialog": "^1.1.16",
     "@radix-ui/react-dropdown-menu": "^2.1.17",
     "@radix-ui/react-label": "^2.1.9",

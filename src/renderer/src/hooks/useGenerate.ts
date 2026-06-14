@@ -1,50 +1,75 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useMemo } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { isoDate } from '@/lib/dates'
+import { useTasks } from '@/hooks/useTasks'
 import type { GenerateRangeOpts, GenerateOptions, Report } from '@/types/weeklog'
 
-interface GenerateRunState {
-  busy: boolean
-  progress: { done: number; total: number; project: string } | null
-  status: string
-  report: string
-}
-
-/** 通用生成流程：采集 → AI 融合 → 渲染，带进度订阅与历史保存 */
+/**
+ * 生成报告流程。
+ *
+ * 关键改进：busy / progress / status 从全局任务系统（useTasks）派生，
+ * 切换页面再回来时不会丢失进度——任务在主进程持久。
+ * report 文本保存在本地 state，完成后填入；切换页面会丢文本，
+ * 但状态栏任务面板仍显示「完成」，报告可在历史记录里找回。
+ */
 export function useGenerate() {
-  const [state, setState] = useState<GenerateRunState>({
-    busy: false,
-    progress: null,
-    status: '',
-    report: '',
-  })
+  const { tasks } = useTasks()
+  // 最近一个 generate 任务（running 优先，否则最近一条）
+  const generateTask = useMemo(() => {
+    const running = tasks.find((t) => t.kind === 'generate' && t.status === 'running')
+    return running || tasks.find((t) => t.kind === 'generate')
+  }, [tasks])
+
+  const busy = generateTask?.status === 'running'
+  const progress = generateTask?.progress
+    ? { done: generateTask.progress.done, total: generateTask.progress.total, project: generateTask.progress.label }
+    : null
+
+  const [report, setReport] = useState('')
+  const [localStatus, setLocalStatus] = useState('')
+
+  // 从任务派生 status 展示文本（任务存在时优先用任务状态）
+  const status = useMemo(() => {
+    if (!generateTask) return localStatus
+    if (generateTask.status === 'running') return generateTask.detail || generateTask.title
+    if (generateTask.status === 'done') {
+      const r = generateTask.result as { commitCount?: number; noteCount?: number; bucketCount?: number; durationMs?: number } | null
+      if (r) return `✓ 完成 · ${r.commitCount || 0} commits + ${r.noteCount || 0} 笔记 → ${r.bucketCount || 0} 段 · ${((r.durationMs || 0) / 1000).toFixed(1)}s`
+      return '✓ 完成'
+    }
+    if (generateTask.status === 'error') return `✗ ${generateTask.error || '失败'}`
+    return localStatus
+  }, [generateTask, localStatus])
+
   const offRef = useRef<(() => void) | null>(null)
 
   const run = useCallback(
     async (rangeOpts: GenerateRangeOpts, options: GenerateOptions, type: '周报' | '日报') => {
-      setState({ busy: true, progress: null, status: '采集 commit + 加载笔记…', report: '' })
-      offRef.current = api.onProgress((m) => {
-        setState((s) => ({ ...s, progress: m, status: `AI 融合生成中… ${m.done}/${m.total}（${m.project}）` }))
-      })
+      setLocalStatus('采集 commit + 加载笔记…')
+      setReport('')
+      // 兼容旧 progress 订阅（主进程仍会发，避免 listener 泄漏）
+      offRef.current = api.onProgress(() => {})
       try {
-        const report: Report = await api.generate({ rangeOpts, options })
+        const result: Report = await api.generate({
+          rangeOpts,
+          options: { ...options, _reportType: type } as GenerateOptions & { _reportType?: string },
+        })
         offRef.current?.()
         offRef.current = null
-        if (report.error) {
-          setState((s) => ({ ...s, busy: false, status: `✗ ${report.error}`, report: '' }))
-          toast.error(report.error)
+        if (result.error) {
+          setLocalStatus(`✗ ${result.error}`)
+          toast.error(result.error)
           return
         }
-        const m = report.meta || {}
-        const status = `✓ 完成 · ${m.commitCount || 0} commits + ${m.noteCount || 0} 笔记 → ${m.bucketCount || 0} 段 · ${((m.durationMs || 0) / 1000).toFixed(1)}s${report.failedUnits.length ? ' · ' + report.failedUnits.length + ' 次降级' : ''}`
-        setState({ busy: false, progress: null, status, report: report.text || '（无内容）' })
-        // 保存历史
+        const m = result.meta || {}
+        setLocalStatus(`✓ 完成 · ${m.commitCount || 0} commits + ${m.noteCount || 0} 笔记 → ${m.bucketCount || 0} 段 · ${((m.durationMs || 0) / 1000).toFixed(1)}s${result.failedUnits.length ? ' · ' + result.failedUnits.length + ' 次降级' : ''}`)
+        setReport(result.text || '（无内容）')
         await api.history.save({
           type,
-          rangeStart: report.rangeStart ? isoDate(new Date(report.rangeStart)) : '',
-          rangeEnd: report.rangeEnd ? isoDate(new Date(report.rangeEnd)) : '',
-          text: report.text || '',
+          rangeStart: result.rangeStart ? isoDate(new Date(result.rangeStart)) : '',
+          rangeEnd: result.rangeEnd ? isoDate(new Date(result.rangeEnd)) : '',
+          text: result.text || '',
           meta: m,
         })
         toast.success(`${type}生成完成`)
@@ -52,12 +77,12 @@ export function useGenerate() {
         offRef.current?.()
         offRef.current = null
         const msg = (e as Error).message
-        setState((s) => ({ ...s, busy: false, status: `✗ ${msg}`, report: '' }))
+        setLocalStatus(`✗ ${msg}`)
         toast.error('生成失败', { description: msg })
       }
     },
     []
   )
 
-  return { ...state, run }
+  return { busy, progress, status, report, run }
 }

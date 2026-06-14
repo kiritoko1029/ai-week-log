@@ -5,9 +5,24 @@
  */
 const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, globalShortcut, ipcMain, Notification } = require('electron')
 const path = require('path')
+
+// Windows 控制台默认 GBK 编码，中文日志会乱码。强制 stdout/stderr 为 UTF-8。
+if (process.platform === 'win32') {
+  try {
+    if (process.stdout && typeof process.stdout.setDefaultEncoding === 'function') {
+      process.stdout.setDefaultEncoding('utf-8')
+    }
+    if (process.stderr && typeof process.stderr.setDefaultEncoding === 'function') {
+      process.stderr.setDefaultEncoding('utf-8')
+    }
+  } catch {}
+}
+
 const { registerIpc } = require('./ipc')
 const { trayIconBuffer } = require('./icon')
 const { loadConfig } = require('./config')
+const { syncAll } = require('./webdav')
+const secrets = require('./secrets')
 
 const SHORTCUT_DEFAULT = 'CommandOrControl+Shift+L'
 const PRELOAD = path.join(__dirname, '..', 'preload', 'index.js')
@@ -233,9 +248,40 @@ function friendlyShortcut(accel) {
 
 function quitApp() {
   isQuitting = true
-  globalShortcut.unregisterAll()
-  if (tray) { tray.destroy(); tray = null }
-  app.quit()
+  // WebDAV 退出自动推送（同步等待，带超时保护）
+  const syncDone = triggerAutoSync('push')
+  // 给同步最多 8 秒，超时也放行退出
+  const timeout = new Promise((resolve) => setTimeout(resolve, 8000))
+  Promise.race([syncDone, timeout]).finally(() => {
+    globalShortcut.unregisterAll()
+    if (tray) { tray.destroy(); tray = null }
+    app.quit()
+  })
+}
+
+/**
+ * 触发 WebDAV 自动同步。
+ * @param {'pull'|'push'} action
+ * @returns {Promise<void>} 同步完成（或失败）后 resolve
+ */
+function triggerAutoSync(action) {
+  try {
+    const cfg = loadConfig(app.getPath('userData'))
+    const wcfg = cfg.webdav || {}
+    if (!wcfg.enabled || !wcfg.url) return Promise.resolve()
+    const mode = wcfg.autoSync || 'both'
+    const shouldRun = mode === 'both' || mode === action
+    if (!shouldRun) return Promise.resolve()
+    const password = secrets.getKey(app.getPath('userData'), 'webdav')
+    return syncAll({ cfg, dir: app.getPath('userData'), password, direction: action })
+      .then((r) => {
+        console.log(`[webdav] 自动${action === 'pull' ? '拉取' : '推送'}完成：拉取 ${r.pulled}，推送 ${r.pushed}`)
+      })
+      .catch((e) => console.warn(`[webdav] 自动${action === 'pull' ? '拉取' : '推送'}失败：`, e.message))
+  } catch (e) {
+    console.warn('[webdav] 自动同步初始化失败：', e.message)
+    return Promise.resolve()
+  }
 }
 
 app.whenReady().then(() => {
@@ -258,6 +304,9 @@ app.whenReady().then(() => {
   createWindow()
   createTray()
   applyShortcut(cfg.ui && cfg.ui.quickNoteShortcut)
+
+  // ── WebDAV 启动自动拉取（异步、不阻塞、失败只 warn）──
+  triggerAutoSync('pull')
 
   // ── IPC ──
   ipcMain.on('quicknote:hide', () => hideQuickNote())

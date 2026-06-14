@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, EyeOff, FolderOpen, Save, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database } from 'lucide-react'
 import { ProviderBadge } from '@/components/BrandIcons'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -15,8 +15,9 @@ import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import type { Config } from '@/types/weeklog'
+import type { Config, MemoryIndexItem, WebdavStatus, MemoryQueueStatus } from '@/types/weeklog'
 
 export function SettingsPage() {
   const { config, save } = useConfig()
@@ -25,6 +26,19 @@ export function SettingsPage() {
   const [showKey, setShowKey] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [keyAvailable, setKeyAvailable] = useState(true)
+
+  // WebDAV 同步状态
+  const [webdavPassword, setWebdavPassword] = useState('')
+  const [showWebdavPass, setShowWebdavPass] = useState(false)
+  const [webdavStatus, setWebdavStatus] = useState<WebdavStatus | null>(null)
+  const [testingWebdav, setTestingWebdav] = useState(false)
+  const [syncingWebdav, setSyncingWebdav] = useState(false)
+
+  // AI 记忆状态
+  const [memList, setMemList] = useState<MemoryIndexItem[]>([])
+  const [memQueue, setMemQueue] = useState<MemoryQueueStatus | null>(null)
+  const [rebuildingMem, setRebuildingMem] = useState(false)
+  const [memDialogOpen, setMemDialogOpen] = useState(false)
 
   const recorder = useShortcutRecorder(config?.ui?.quickNoteShortcut || 'CommandOrControl+Shift+L')
 
@@ -41,6 +55,20 @@ export function SettingsPage() {
     })
     api.config.notesDir().then(setNotesDirDisplay)
   }, [draft])
+
+  // 加载 WebDAV 密码 + 同步状态
+  useEffect(() => {
+    api.webdav.getPassword().then((r) => setWebdavPassword(r.password || ''))
+    api.webdav.status().then(setWebdavStatus)
+  }, [])
+
+  // 加载记忆列表 + 队列状态（记忆弹窗打开时刷新）
+  useEffect(() => {
+    if (memDialogOpen) {
+      api.memory.list().then(setMemList)
+      api.memory.queueStatus().then(setMemQueue)
+    }
+  }, [memDialogOpen])
 
   const patch = useCallback((updater: (c: Config) => void) => {
     setDraft((prev) => {
@@ -83,11 +111,77 @@ export function SettingsPage() {
     if (apiKey !== curKey) {
       await api.secrets.set(draft.ai.provider, apiKey)
     }
+    // WebDAV 密码：与当前存储不同才写入
+    const curWd = (await api.webdav.getPassword()).password || ''
+    if (webdavPassword !== curWd) {
+      await api.webdav.savePassword(webdavPassword)
+    }
     await save(draft)
     const sr = await api.shortcut.apply()
     if (sr && !sr.ok) toast.warning('快捷键可能被占用，已回退默认')
     else toast.success('设置已保存')
-  }, [draft, apiKey, recorder.accel, save])
+  }, [draft, apiKey, webdavPassword, recorder.accel, save])
+
+  // WebDAV：测试连接
+  const testWebdav = useCallback(async () => {
+    if (!draft) return
+    setTestingWebdav(true)
+    try {
+      const r = await api.webdav.test(draft.webdav.url, draft.webdav.username, webdavPassword)
+      if (r.ok) toast.success(r.message)
+      else toast.error(r.message)
+    } catch (e: any) {
+      toast.error('测试失败：' + (e?.message || '未知错误'))
+    } finally {
+      setTestingWebdav(false)
+    }
+  }, [draft, webdavPassword])
+
+  // WebDAV：立即同步
+  const syncNow = useCallback(async (direction: 'pull' | 'push' | 'both') => {
+    setSyncingWebdav(true)
+    try {
+      // 先确保配置已保存（同步用最新配置）
+      if (draft) await save(draft)
+      const r = await api.webdav.syncNow(direction)
+      await api.webdav.status().then(setWebdavStatus)
+      if (r.errors.length) {
+        toast.warning(`同步完成：拉取 ${r.pulled}，推送 ${r.pushed}，${r.errors.length} 个错误`)
+      } else {
+        toast.success(`同步完成：拉取 ${r.pulled}，推送 ${r.pushed}`)
+      }
+    } catch (e: any) {
+      toast.error('同步失败：' + (e?.message || '未知错误'))
+    } finally {
+      setSyncingWebdav(false)
+    }
+  }, [draft, save])
+
+  // 记忆：重建
+  const rebuildMemory = useCallback(async () => {
+    setRebuildingMem(true)
+    try {
+      const r = await api.memory.rebuild()
+      if (r.error) {
+        toast.error(r.error)
+      } else {
+        toast.success(`记忆重建完成：生成 ${r.generated} 条，失败 ${r.failed} 条`)
+        api.memory.list().then(setMemList)
+        api.memory.queueStatus().then(setMemQueue)
+      }
+    } catch (e: any) {
+      toast.error('重建失败：' + (e?.message || '未知错误'))
+    } finally {
+      setRebuildingMem(false)
+    }
+  }, [])
+
+  // 记忆：删除单条
+  const removeMemory = useCallback(async (id: string) => {
+    await api.memory.remove(id)
+    setMemList((prev) => prev.filter((m) => m.id !== id))
+    toast.success('已删除')
+  }, [])
 
   if (!draft) {
     return <div className="py-8 text-center text-sm text-muted-foreground">加载配置中…</div>
@@ -379,6 +473,250 @@ export function SettingsPage() {
               checked={draft.output.withCommits}
               onCheckedChange={(v) => patch((c) => { c.output.withCommits = v })}
             />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 云同步 WebDAV */}
+      <Card className="border-l-4 border-l-sky-500">
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2"><Cloud className="size-4" />云同步（WebDAV）</CardTitle>
+          <Badge variant="secondary" className="bg-sky-500/10 text-sky-600 dark:text-sky-400">v1.2</Badge>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <h4 className="text-sm font-semibold">启用 WebDAV 同步</h4>
+              <p className="text-xs text-muted-foreground">同步笔记、报告历史、AI 记忆、配置偏好到多台电脑</p>
+            </div>
+            <Switch
+              checked={draft.webdav.enabled}
+              onCheckedChange={(v) => patch((c) => { c.webdav.enabled = v })}
+            />
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <div className="flex-[2] space-y-1.5">
+              <Label>WebDAV 服务器 URL</Label>
+              <Input
+                value={draft.webdav.url}
+                onChange={(e) => patch((c) => { c.webdav.url = e.target.value })}
+                placeholder="https://dav.example.com/weeklog/"
+                disabled={!draft.webdav.enabled}
+              />
+            </div>
+            <div className="flex-1 space-y-1.5">
+              <Label>用户名</Label>
+              <Input
+                value={draft.webdav.username}
+                onChange={(e) => patch((c) => { c.webdav.username = e.target.value })}
+                disabled={!draft.webdav.enabled}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>密码（加密存储，不落配置文件）</Label>
+            <div className="flex gap-2">
+              <Input
+                type={showWebdavPass ? 'text' : 'password'}
+                value={webdavPassword}
+                onChange={(e) => setWebdavPassword(e.target.value)}
+                placeholder="••••••"
+                autoComplete="off"
+                disabled={!draft.webdav.enabled}
+                className="flex-1"
+              />
+              <Button variant="outline" type="button" onClick={() => setShowWebdavPass((s) => !s)} disabled={!draft.webdav.enabled}>
+                {showWebdavPass ? <EyeOff /> : <Eye />}
+                {showWebdavPass ? '隐藏' : '显示'}
+              </Button>
+              <Button variant="outline" type="button" onClick={testWebdav} disabled={!draft.webdav.enabled || testingWebdav || !draft.webdav.url}>
+                {testingWebdav ? <RefreshCw className="animate-spin" /> : <Zap />}
+                测试
+              </Button>
+            </div>
+          </div>
+          <Separator />
+          <div className="space-y-1.5">
+            <Label>自动同步时机</Label>
+            <Select
+              value={draft.webdav.autoSync}
+              onValueChange={(v) => patch((c) => { c.webdav.autoSync = v as Config['webdav']['autoSync'] })}
+              disabled={!draft.webdav.enabled}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="both">启动拉取 + 退出推送（推荐）</SelectItem>
+                <SelectItem value="pull">仅启动拉取</SelectItem>
+                <SelectItem value="push">仅退出推送</SelectItem>
+                <SelectItem value="off">关闭自动同步（仅手动）</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="default" type="button" onClick={() => syncNow('both')} disabled={!draft.webdav.enabled || syncingWebdav}>
+              {syncingWebdav ? <RefreshCw className="animate-spin" /> : <RefreshCw />}
+              立即同步（双向）
+            </Button>
+            <Button variant="outline" type="button" onClick={() => syncNow('pull')} disabled={!draft.webdav.enabled || syncingWebdav}>
+              仅拉取
+            </Button>
+            <Button variant="outline" type="button" onClick={() => syncNow('push')} disabled={!draft.webdav.enabled || syncingWebdav}>
+              仅推送
+            </Button>
+            {webdavStatus?.lastSync && (
+              <span className="text-xs text-muted-foreground">
+                最近同步：{new Date(webdavStatus.lastSync).toLocaleString()}
+                {typeof webdavStatus.pulled === 'number' && `（拉取 ${webdavStatus.pulled}，推送 ${webdavStatus.pushed}）`}
+              </span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* AI 记忆系统 */}
+      <Card className="border-l-4 border-l-amber-500">
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2"><Brain className="size-4" />AI 记忆系统</CardTitle>
+          <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 dark:text-amber-400">v1.2</Badge>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <h4 className="text-sm font-semibold">启用 AI 记忆</h4>
+              <p className="text-xs text-muted-foreground">自动整理压缩历史报告，写笔记时辅助推断项目与工作</p>
+            </div>
+            <Switch
+              checked={draft.memory.enabled}
+              onCheckedChange={(v) => patch((c) => { c.memory.enabled = v })}
+            />
+          </div>
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <h4 className="text-sm font-semibold">报告生成后自动产出记忆</h4>
+              <p className="text-xs text-muted-foreground">每次生成报告后，AI 自动压缩为一条长期记忆</p>
+            </div>
+            <Switch
+              checked={draft.memory.autoGenerate}
+              onCheckedChange={(v) => patch((c) => { c.memory.autoGenerate = v })}
+              disabled={!draft.memory.enabled}
+            />
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <div className="min-w-[200px] space-y-1.5">
+              <Label>Embedding 来源</Label>
+              <Select
+                value={draft.memory.embeddingSource}
+                onValueChange={(v) => patch((c) => { c.memory.embeddingSource = v as Config['memory']['embeddingSource'] })}
+                disabled={!draft.memory.enabled}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="local">本地模型（推荐，离线、隐私）</SelectItem>
+                  <SelectItem value="api">API（OpenAI embedding）</SelectItem>
+                </SelectContent>
+              </Select>
+              {draft.memory.embeddingSource === 'local' && (
+                <p className="text-xs text-muted-foreground">首次使用需下载约 120MB 模型，之后离线缓存</p>
+              )}
+            </div>
+            {draft.memory.embeddingSource === 'local' && (
+              <div className="min-w-[200px] space-y-1.5">
+                <Label>模型下载源</Label>
+                <Select
+                  value={draft.memory.modelSource}
+                  onValueChange={(v) => patch((c) => { c.memory.modelSource = v as Config['memory']['modelSource'] })}
+                  disabled={!draft.memory.enabled}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">魔搭 ModelScope（国内推荐，自动）</SelectItem>
+                    <SelectItem value="modelscope">魔搭 ModelScope</SelectItem>
+                    <SelectItem value="huggingface">HuggingFace（国外）</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">国内网络建议用魔搭，下载更快</p>
+              </div>
+            )}
+            <div className="min-w-[200px] space-y-1.5">
+              <Label>本地 Embedding 模型</Label>
+              <Input
+                value={draft.memory.embeddingModel}
+                onChange={(e) => patch((c) => { c.memory.embeddingModel = e.target.value })}
+                disabled={!draft.memory.enabled || draft.memory.embeddingSource !== 'local'}
+                placeholder="Xenova/multilingual-e5-small"
+              />
+            </div>
+            <div className="min-w-[120px] space-y-1.5">
+              <Label>检索条数 (topK)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                value={draft.memory.topK}
+                onChange={(e) => patch((c) => { c.memory.topK = Number(e.target.value) || 5 })}
+                disabled={!draft.memory.enabled}
+              />
+            </div>
+          </div>
+          <Separator />
+          <div className="flex flex-wrap items-center gap-2">
+            <Dialog open={memDialogOpen} onOpenChange={setMemDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" type="button" disabled={!draft.memory.enabled}>
+                  <Database />
+                  查看记忆 ({memList.length || '…'})
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>AI 记忆库</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-2">
+                  {memQueue && memQueue.pending > 0 && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      ⏳ {memQueue.pending} 条记忆正在后台计算向量…
+                    </p>
+                  )}
+                  {memList.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">暂无记忆条目。生成报告后会自动积累。</p>
+                  ) : (
+                    memList.map((m) => (
+                      <div key={m.id} className="rounded-md border p-3">
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="text-sm font-semibold">{m.project || '未分类'}</span>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary" className="text-xs">{m.date}</Badge>
+                            {!m.embeddingReady && <Badge variant="outline" className="text-xs">向量待算</Badge>}
+                            <Button variant="ghost" size="sm" type="button" onClick={() => removeMemory(m.id)}>
+                              <Trash2 className="size-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="text-sm text-foreground/80">{m.digest}</p>
+                        {m.keywords.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {m.keywords.slice(0, 8).map((k, i) => (
+                              <Badge key={i} variant="outline" className="text-xs">{k}</Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+            <Button
+              variant="outline"
+              type="button"
+              onClick={() => {
+                if (confirm('将根据全部历史报告重新生成记忆（会调用 AI，耗时较长）。确定继续？')) rebuildMemory()
+              }}
+              disabled={!draft.memory.enabled || rebuildingMem}
+            >
+              {rebuildingMem ? <RefreshCw className="animate-spin" /> : <RefreshCw />}
+              重建记忆
+            </Button>
           </div>
         </CardContent>
       </Card>

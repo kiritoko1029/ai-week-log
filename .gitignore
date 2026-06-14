@@ -9,6 +9,7 @@ Thumbs.db
 .idea/
 .claude/
 .codex/
+.agents/
 .od-skills/
 *.artifact.json
 ee_app.log
