@@ -12,6 +12,7 @@ const { loadConfig } = require('./config')
 const SHORTCUT_DEFAULT = 'CommandOrControl+Shift+L'
 const PRELOAD = path.join(__dirname, '..', 'preload', 'index.js')
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer')
+const APP_ICON = path.join(__dirname, '..', '..', 'build', 'icon.png')
 // 开发模式直连 Vite dev server（HMR）；生产模式加载打包产物 dist/
 const DEV_SERVER_URL = process.env.WEEKLOG_DEV ? 'http://localhost:5173' : ''
 
@@ -25,9 +26,11 @@ let currentShortcut = SHORTCUT_DEFAULT
 /** 当前主题是否解析为深色（依据 nativeTheme） */
 function isDark() { return nativeTheme.shouldUseDarkColors }
 function windowBg() { return isDark() ? '#0b1020' : '#eef2fb' }
+function getAppIconPath() { return APP_ICON }
 
 // ── 主窗口 ──
 function createWindow() {
+  const iconPath = getAppIconPath()
   mainWindow = new BrowserWindow({
     width: 1240,
     height: 820,
@@ -36,6 +39,7 @@ function createWindow() {
     backgroundColor: windowBg(),
     autoHideMenuBar: true,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    icon: iconPath,
     webPreferences: {
       preload: PRELOAD,
       contextIsolation: true,
@@ -81,6 +85,7 @@ function createWindow() {
 
 // ── 快速记笔记弹窗 ──
 function createQuickNoteWindow() {
+  const iconPath = getAppIconPath()
   quickNoteWin = new BrowserWindow({
     width: 480,
     height: 190,
@@ -93,6 +98,7 @@ function createQuickNoteWindow() {
     skipTaskbar: true,
     alwaysOnTop: true,
     backgroundColor: windowBg(),
+    icon: iconPath,
     webPreferences: {
       preload: PRELOAD,
       contextIsolation: true,
@@ -167,7 +173,10 @@ function applyNativeTheme(theme) {
 
 // ── 托盘 ──
 function createTray() {
-  const image = nativeImage.createFromBuffer(trayIconBuffer(32))
+  const iconPath = getAppIconPath()
+  let image = nativeImage.createFromPath(iconPath)
+  if (image.isEmpty()) image = nativeImage.createFromBuffer(trayIconBuffer(32))
+  if (process.platform === 'darwin') image = image.resize({ width: 18, height: 18 })
   tray = new Tray(image)
   tray.setToolTip('WeekLog — Git 周报/日报生成工具')
   rebuildTrayMenu()
@@ -233,6 +242,10 @@ app.whenReady().then(() => {
   // Windows 下设置 AppUserModelId，使通知以正确应用名显示
   if (process.platform === 'win32') {
     try { app.setAppUserModelId('com.weeklog.desktop') } catch {}
+  }
+  if (process.platform === 'darwin') {
+    const dockIcon = nativeImage.createFromPath(getAppIconPath())
+    if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon)
   }
 
   const cfg = loadConfig(app.getPath('userData'))
