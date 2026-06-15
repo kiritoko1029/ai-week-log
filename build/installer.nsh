@@ -24,7 +24,5 @@
       ${endif}
 
     skipUserData:
-
-    SetShellVarContext lastused
   !endif
 !macroend
