@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Play, Eye, Copy, Download, RefreshCw, Loader2 } from 'lucide-react'
+import { Play, Eye, Copy, Download, RefreshCw, Loader2, Pencil, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
@@ -37,6 +37,13 @@ export function GeneratePage() {
   // 融合预览统计
   const [fusion, setFusion] = useState<{ commitCount: number; noteCount: number; noteProjectCount: number; noteMiscCount: number; desc: string } | null>(null)
   const [fusionLoading, setFusionLoading] = useState(false)
+
+  // 报告编辑：editText 是用户可改的副本，随每次新生成的 report 重置
+  const [editText, setEditText] = useState('')
+  const [editing, setEditing] = useState(false)
+  useEffect(() => {
+    setEditText(gen.report)
+  }, [gen.report])
 
   useEffect(() => {
     if (config) {
@@ -100,9 +107,19 @@ export function GeneratePage() {
     }
   }, [buildRange, buildOptions])
 
+  // 复制 / 导出一律用编辑后的文本（用户可能已手动更正）
+  const reportText = editing ? editText : gen.report
   const copyReport = useCallback(() => {
-    navigator.clipboard?.writeText(gen.report)
+    navigator.clipboard?.writeText(editText)
     toast.success('已复制到剪贴板')
+  }, [editText])
+
+  // 切换编辑模式：进入编辑时以当前报告为起点；改动持续保留，直到下次「生成报告」重置
+  const toggleEditing = useCallback(() => {
+    setEditing((on) => {
+      if (!on) setEditText(gen.report) // 进入编辑前同步最新
+      return !on
+    })
   }, [gen.report])
 
   return (
@@ -267,6 +284,10 @@ export function GeneratePage() {
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle>报告预览</CardTitle>
           <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={toggleEditing} disabled={!gen.report}>
+              {editing ? <Check /> : <Pencil />}
+              {editing ? '完成' : '编辑'}
+            </Button>
             <Button variant="outline" size="sm" onClick={copyReport} disabled={!gen.report}>
               <Copy />
               复制
@@ -278,7 +299,17 @@ export function GeneratePage() {
           </div>
         </CardHeader>
         <CardContent>
-          <ReportPreview text={gen.report} />
+          {editing ? (
+            <textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              autoFocus
+              spellCheck={false}
+              className="min-h-[240px] w-full resize-y rounded-md border bg-zinc-950 p-8 font-mono text-sm leading-[1.85] text-slate-200 shadow-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+          ) : (
+            <ReportPreview text={reportText} />
+          )}
         </CardContent>
       </Card>
     </div>

@@ -177,6 +177,65 @@ function collectRepo(repo, range, filters = {}) {
   return parseGitLog(raw, repo.path, projectName)
 }
 
+// ── 扫描目录下的 Git 仓库 ──
+const fs = require('fs')
+const path = require('path')
+
+/** 应跳过的目录名（不递归进入） */
+const SCAN_SKIP_DIRS = new Set(['node_modules', '.git', '.svn', 'build', 'dist', 'target', '.next', '__pycache__'])
+
+/**
+ * 扫描 rootDir 下所有 Git 仓库，最大深度 maxDepth（rootDir 的直接子级算第 1 层）。
+ * - 命中 .git 的目录即视为一个仓库，不再向其内部下钻（避免把 submodule 算成独立仓库）
+ * - 跳过 node_modules、隐藏目录、常见构建产物目录
+ * 返回 [{ path, name, branch }]，path 去重、按字典序排列
+ *
+ * 用 .git 存在性判断而非每层 spawn git（大目录树下快几个数量级）。
+ */
+function scanGitRepos(rootDir, maxDepth = 3) {
+  const results = []
+  const seen = new Set()
+  // 队列项：{ dir, depth }，rootDir 自身算 depth 0，其直接子目录是 depth 1
+  const queue = [{ dir: rootDir, depth: 0 }]
+
+  while (queue.length) {
+    const { dir, depth } = queue.shift()
+    if (depth > maxDepth) continue
+    let entries
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue // 无权限或非目录
+    }
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue
+      const name = ent.name
+      // 跳过隐藏目录（. 开头）与黑名单
+      if (name.startsWith('.') || SCAN_SKIP_DIRS.has(name)) continue
+      const full = path.join(dir, name)
+      // 软链可能成环，跳过
+      if (ent.isSymbolicLink()) continue
+      // 命中 .git → 这是一个仓库
+      const gitDir = path.join(full, '.git')
+      if (fs.existsSync(gitDir)) {
+        if (!seen.has(full)) {
+          seen.add(full)
+          results.push({ path: full, name, branch: currentBranch(full) })
+        }
+        // 仓库内部不再下钻
+        continue
+      }
+      // 非仓库目录：未达深度上限则继续探索
+      if (depth + 1 <= maxDepth) {
+        queue.push({ dir: full, depth: depth + 1 })
+      }
+    }
+  }
+
+  results.sort((a, b) => a.path.localeCompare(b.path))
+  return results
+}
+
 module.exports = {
   FIELD_SEP,
   REC_SEP,
@@ -187,4 +246,5 @@ module.exports = {
   parseGitLog,
   collectRepo,
   normalizeNumstatPath,
+  scanGitRepos,
 }

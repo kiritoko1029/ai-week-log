@@ -10,8 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { ProjectSelect } from '@/components/ProjectSelect'
 
 interface DashStats {
   commitCount: number
@@ -59,7 +59,7 @@ export function DashboardPage() {
     }
   }, [noteText, noteProject, loadStats])
 
-  const projects = config?.repos.map((r) => ({ name: r.name, label: r.alias || r.name })) ?? []
+  const projects = config?.repos.map((r) => ({ value: r.name, label: r.alias || r.name })) ?? []
 
   return (
     <div className="space-y-6">
@@ -118,22 +118,11 @@ export function DashboardPage() {
             </div>
             <div className="min-w-[160px] space-y-1.5">
               <Label>关联项目</Label>
-              <Select
-                value={noteProject || '__misc__'}
-                onValueChange={(v) => setNoteProject(v === '__misc__' ? '' : v)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="日常工作（通用）" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__misc__">日常工作（通用）</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.name} value={p.name}>
-                      {p.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ProjectSelect
+                value={noteProject}
+                onChange={(v) => setNoteProject(v)}
+                options={projects}
+              />
             </div>
             <Button onClick={addNote} className="bg-violet-600 hover:bg-violet-600/90">
               <Plus />

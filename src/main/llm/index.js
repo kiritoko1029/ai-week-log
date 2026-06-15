@@ -97,10 +97,49 @@ function estimateBucketTokens(bucket) {
   return estimateTokens(SYSTEM_PROMPT) + estimateTokens(buildUserPrompt(bucket))
 }
 
+/**
+ * 测试 AI 连接：发起一次最小请求，验证 endpoint / 鉴权 / 模型名 / 网络是否可用。
+ * - 用最小 prompt，maxTokens 压到 16，省 token
+ * - retries 强制为 0、timeout 压到 15s：鉴权/模型错误要立即反馈，不要重试
+ * 返回 { ok, message, model?, latencyMs? }，不抛异常（错误信息进 message）
+ */
+async function testProvider(cfg, apiKey) {
+  const t0 = Date.now()
+  try {
+    const testCfg = {
+      ...cfg,
+      ai: {
+        ...cfg.ai,
+        timeoutSeconds: 15,
+        retries: 0,
+        // 覆盖当前 provider 的 maxTokens，省 token
+        [cfg.ai.provider]: {
+          ...cfg.ai[cfg.ai.provider],
+          maxTokens: 16,
+        },
+      },
+    }
+    const provider = createProvider(testCfg, apiKey)
+    const r = await provider.summarize('You are a connection test.', 'Reply with: OK')
+    const latencyMs = Date.now() - t0
+    return {
+      ok: true,
+      message: `连接成功 · ${r.model} · ${latencyMs}ms · 回复：${r.text.slice(0, 40)}`,
+      model: r.model,
+      latencyMs,
+    }
+  } catch (e) {
+    // LLMError 子类带类型信息；统一收敛为友好文案
+    const msg = e && e.message ? e.message : String(e)
+    return { ok: false, message: msg, latencyMs: Date.now() - t0 }
+  }
+}
+
 module.exports = {
   SYSTEM_PROMPT,
   createProvider,
   buildUserPrompt,
   buildCommitsBlock,
   estimateBucketTokens,
+  testProvider,
 }

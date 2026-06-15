@@ -10,6 +10,8 @@
 
 const fs = require('fs')
 const path = require('path')
+const https = require('https')
+const http = require('http')
 const { createProvider } = require('./llm')
 const { estimateTokens } = require('./utils')
 
@@ -120,16 +122,67 @@ function resolveModelCacheDir(userDataDir) {
 
 /**
  * 配置 Transformers.js 的模型下载源。
- * - huggingface: 默认 HF Hub（国外）
+ * - huggingface: HF Hub（国外）
  * - modelscope: 魔搭社区（国内更快）
- * - auto: 优先 modelscope
+ * - auto: 探测魔搭连通性，通则走魔搭，否则回退 HF
  *
  * ModelScope 的路径结构与 HF 不同：org/model → 用 /resolve/main/ 拉取。
  * Transformers.js 通过 env.remoteHost + remotePathTemplate 控制。
  */
-function configureModelSource(transformers, source) {
+
+// 进程级缓存：auto 探测结果只算一次
+let _resolvedSource = null
+
+/**
+ * 轻量连通性探测：对给定 URL 发 HEAD 请求，超时/错误即视为不可达。
+ * 用原生 http(s)，避免引入额外依赖；只关心"能否连上"。
+ */
+function probeReachable(url, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (ok) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(ok)
+    }
+    const lib = url.startsWith('https://') ? https : http
+    const req = lib.request(url, { method: 'HEAD', timeout: timeoutMs }, (res) => {
+      // 2xx/3xx/4xx 都算"能连上"，只有网络层失败才回退
+      finish(res.statusCode != null && res.statusCode < 500)
+    })
+    const cleanup = () => {
+      req.removeAllListeners()
+      req.destroy()
+    }
+    req.on('timeout', () => finish(false))
+    req.on('error', () => finish(false))
+    req.end()
+  })
+}
+
+/**
+ * 把配置里的 modelSource 解析成实际的下载源。
+ * auto 时探测魔搭；modelscope/huggingface 原样返回。
+ * 探测结果做进程级缓存。
+ */
+async function resolveSource(source) {
+  if (source !== 'auto') return source
+  if (_resolvedSource) return _resolvedSource
+  try {
+    const ok = await probeReachable('https://modelscope.cn')
+    _resolvedSource = ok ? 'modelscope' : 'huggingface'
+    console.log(`[memory] auto 模型源探测：魔搭 ${ok ? '可达' : '不可达'} → 选用 ${_resolvedSource}`)
+  } catch {
+    _resolvedSource = 'huggingface'
+    console.log('[memory] auto 模型源探测异常 → 回退 huggingface')
+  }
+  return _resolvedSource
+}
+
+function applySource(transformers, source) {
   const env = transformers.env
-  if (source === 'modelscope' || source === 'auto') {
+  if (source === 'modelscope') {
     // 魔搭：https://modelscope.cn/api/v1/models/{org}/{model}/resolve/main/
     env.remoteHost = 'https://modelscope.cn'
     env.remotePathTemplate = '/api/v1/models/{model}/resolve/main/'
@@ -138,6 +191,12 @@ function configureModelSource(transformers, source) {
     env.remoteHost = 'https://huggingface.co'
     env.remotePathTemplate = '/{model}/resolve/main/'
   }
+}
+
+async function configureModelSource(transformers, source) {
+  const resolved = await resolveSource(source)
+  applySource(transformers, resolved)
+  return resolved
 }
 
 /**
@@ -157,8 +216,8 @@ async function getLocalPipeline(modelName, cacheDir, modelSource) {
           transformers.env.cacheDir = cacheDir
         } catch {}
       }
-      // 配置下载源
-      configureModelSource(transformers, modelSource || 'auto')
+      // 配置下载源（auto 会探测连通性，可能异步）
+      const resolvedSource = await configureModelSource(transformers, modelSource || 'auto')
       // 禁用浏览器缓存（Node 环境不需要）
       try {
         transformers.env.useBrowserCache = false
@@ -189,7 +248,7 @@ async function getLocalPipeline(modelName, cacheDir, modelSource) {
         } catch {}
       }
 
-      _progressCallback?.({ phase: 'start', model: modelName, source: modelSource || 'auto' })
+      _progressCallback?.({ phase: 'start', model: modelName, source: resolvedSource })
       _localPipeline = await pipeline('feature-extraction', modelName, {
         progress_callback: progressCb,
       })

@@ -14,7 +14,8 @@ const {
   resolveApiKey,
   apiKeyStatus,
 } = require('./config')
-const { checkGit, isGitRepo, currentBranch } = require('./git')
+const { checkGit, isGitRepo, currentBranch, scanGitRepos } = require('./git')
+const { testProvider } = require('./llm')
 const notes = require('./notes')
 const secrets = require('./secrets')
 const { collect, generate } = require('./pipeline')
@@ -124,6 +125,19 @@ function registerIpc({ app, getMainWindow }) {
     return { ok: true }
   })
 
+  // ── AI 连接测试 ──
+  // 测试当前编辑中的配置（未保存也行），apiKey 从前端透传：优先用输入框的值，
+  // 没填则回退到已存储的 key（便于测"已保存配置"是否仍有效）
+  ipcMain.handle('ai:test', async (_e, { cfg, apiKey } = {}) => {
+    const useCfg = cfg || getConfig()
+    const provider = useCfg.ai.provider
+    const key = apiKey || secrets.getKey(userDataDir, provider) || ''
+    if (!key) {
+      return { ok: false, message: `未设置 ${provider} 的 API Key，请先填写` }
+    }
+    return testProvider(useCfg, key)
+  })
+
   // ── 仓库 ──
   ipcMain.handle('repo:validate', (_e, p) => {
     if (!p || !fs.existsSync(p)) return { ok: false, branch: '' }
@@ -156,6 +170,18 @@ function registerIpc({ app, getMainWindow }) {
     cfg.repos = cfg.repos.filter((r) => r.id !== id)
     return persist(cfg)
   })
+  // 扫描目录下的 Git 仓库（最大深度 3 层）
+  ipcMain.handle('repo:scan', (_e, { rootDir, maxDepth } = {}) => {
+    if (!rootDir || !fs.existsSync(rootDir) || !fs.statSync(rootDir).isDirectory()) {
+      return { repos: [], error: '无效的目录路径' }
+    }
+    try {
+      const depth = Math.max(1, Math.min(maxDepth ?? 3, 3))
+      return { repos: scanGitRepos(rootDir, depth), error: null }
+    } catch (e) {
+      return { repos: [], error: (e && e.message) || String(e) }
+    }
+  })
 
   // ── 笔记 ──
   ipcMain.handle('notes:add', (_e, { date, project, content }) => {
@@ -172,11 +198,6 @@ function registerIpc({ app, getMainWindow }) {
     const cfg = getConfig()
     return notes.loadNotes(getNotesDir(), from, to, cfg.notes.miscProject)
   })
-
-  // ── 采集 / 生成 ──
-  ipcMain.handle('collect', (_e, { rangeOpts, options }) =>
-    collect({ cfg: getConfig(), rangeOpts: rangeOpts || {}, notesDir: getNotesDir(), options: options || {} })
-  )
 
   // ── 采集 / 生成 ──
   ipcMain.handle('collect', (_e, { rangeOpts, options }) =>
@@ -233,6 +254,17 @@ function registerIpc({ app, getMainWindow }) {
     list.unshift({ id: newId(), createdAt: new Date().toISOString(), ...entry })
     writeHistory(userDataDir, list.slice(0, 200))
     return list[0]
+  })
+  ipcMain.handle('history:update', (_e, { id, text } = {}) => {
+    if (!id || typeof text !== 'string') return { ok: false }
+    const list = readHistory(userDataDir)
+    const item = list.find((h) => h.id === id)
+    if (!item) return { ok: false }
+    item.text = text
+    // 标记为人工编辑过，便于历史页区分
+    item.edited = true
+    writeHistory(userDataDir, list)
+    return { ok: true }
   })
 
   // ── 对话框 ──

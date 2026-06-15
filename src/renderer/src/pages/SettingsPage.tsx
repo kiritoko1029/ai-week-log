@@ -34,6 +34,9 @@ export function SettingsPage() {
   const [testingWebdav, setTestingWebdav] = useState(false)
   const [syncingWebdav, setSyncingWebdav] = useState(false)
 
+  // AI 连接测试状态
+  const [testingAi, setTestingAi] = useState(false)
+
   // AI 记忆状态
   const [memList, setMemList] = useState<MemoryIndexItem[]>([])
   const [memQueue, setMemQueue] = useState<MemoryQueueStatus | null>(null)
@@ -136,6 +139,21 @@ export function SettingsPage() {
       setTestingWebdav(false)
     }
   }, [draft, webdavPassword])
+
+  // AI：测试连接（用当前编辑中的配置 + 输入框的 Key，无需先保存）
+  const testAi = useCallback(async () => {
+    if (!draft) return
+    setTestingAi(true)
+    try {
+      const r = await api.ai.test(draft, apiKey)
+      if (r.ok) toast.success(r.message)
+      else toast.error('连接失败', { description: r.message })
+    } catch (e: any) {
+      toast.error('测试失败：' + (e?.message || '未知错误'))
+    } finally {
+      setTestingAi(false)
+    }
+  }, [draft, apiKey])
 
   // WebDAV：立即同步
   const syncNow = useCallback(async (direction: 'pull' | 'push' | 'both') => {
@@ -351,6 +369,10 @@ export function SettingsPage() {
               <Button variant="outline" type="button" onClick={clearApiKey}>
                 <Trash2 />
                 清除
+              </Button>
+              <Button variant="outline" type="button" onClick={testAi} disabled={testingAi}>
+                {testingAi ? <RefreshCw className="animate-spin" /> : <Zap />}
+                测试连接
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
@@ -628,13 +650,13 @@ export function SettingsPage() {
                   disabled={!draft.memory.enabled}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">魔搭 ModelScope（国内推荐，自动）</SelectItem>
-                    <SelectItem value="modelscope">魔搭 ModelScope</SelectItem>
-                    <SelectItem value="huggingface">HuggingFace（国外）</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">国内网络建议用魔搭，下载更快</p>
+                <SelectContent>
+                  <SelectItem value="auto">自动（探测魔搭，不通则回退 HF）</SelectItem>
+                  <SelectItem value="modelscope">魔搭 ModelScope（国内更快）</SelectItem>
+                  <SelectItem value="huggingface">HuggingFace（国外）</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">国内网络建议用魔搭或自动；首次下载约 120MB</p>
               </div>
             )}
             <div className="min-w-[200px] space-y-1.5">

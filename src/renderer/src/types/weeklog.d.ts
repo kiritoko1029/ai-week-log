@@ -13,6 +13,13 @@ export interface Repo {
   author?: string
 }
 
+/** 扫描得到的仓库候选项（未注册） */
+export interface ScannedRepo {
+  path: string
+  name: string
+  branch: string
+}
+
 export interface AiSubConfig {
   model: string
   baseUrl: string
@@ -143,6 +150,8 @@ export interface HistoryEntry {
   rangeEnd: string
   text: string
   meta: ReportMeta
+  /** 人工编辑过（用户在历史/预览里改过正文） */
+  edited?: boolean
 }
 
 export interface SecretsResult {
@@ -153,6 +162,14 @@ export interface SecretsResult {
 export interface WebdavTestResult {
   ok: boolean
   message: string
+}
+
+/** AI 连接测试结果 */
+export interface AiTestResult {
+  ok: boolean
+  message: string
+  model?: string
+  latencyMs?: number
 }
 
 export interface WebdavSyncResult {
@@ -245,11 +262,16 @@ export interface WeeklogAPI {
     set: (provider: 'openai' | 'anthropic', key: string) => Promise<void>
     clear: (provider: 'openai' | 'anthropic') => Promise<void>
   }
+  ai: {
+    /** 连接测试：验证 endpoint / 鉴权 / 模型 / 网络；apiKey 留空则用已存储的 key */
+    test: (cfg: Config, apiKey?: string) => Promise<AiTestResult>
+  }
   repo: {
     validate: (p: string) => Promise<{ ok: boolean; branch: string }>
     add: (r: { path: string; name?: string; branch?: string; alias?: string }) => Promise<{ repo?: Repo; error?: string }>
     update: (id: string, patch: Partial<Repo>) => Promise<Config>
     remove: (id: string) => Promise<Config>
+    scan: (rootDir: string, maxDepth?: number) => Promise<{ repos: ScannedRepo[]; error: string | null }>
   }
   notes: {
     add: (n: { date: string; project: string; content: string }) => Promise<{ file: string }>
@@ -263,6 +285,7 @@ export interface WeeklogAPI {
   history: {
     list: () => Promise<HistoryEntry[]>
     save: (e: Omit<HistoryEntry, 'id' | 'createdAt'>) => Promise<HistoryEntry>
+    update: (id: string, text: string) => Promise<{ ok: boolean }>
   }
   dialog: {
     pickFolder: () => Promise<string | null>

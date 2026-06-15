@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, History as HistoryIcon } from 'lucide-react'
+import { Eye, History as HistoryIcon, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { Card } from '@/components/ui/card'
@@ -12,6 +12,9 @@ import type { HistoryEntry } from '@/types/weeklog'
 export function HistoryPage() {
   const [list, setList] = useState<HistoryEntry[]>([])
   const [selected, setSelected] = useState<HistoryEntry | null>(null)
+  // 编辑态：弹窗内的可编辑文本
+  const [editText, setEditText] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const load = useCallback(async () => {
     setList(await api.history.list())
@@ -20,6 +23,31 @@ export function HistoryPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  const openEntry = useCallback((h: HistoryEntry) => {
+    setSelected(h)
+    setEditText(h.text || '')
+  }, [])
+
+  const saveEdit = useCallback(async () => {
+    if (!selected) return
+    setSaving(true)
+    try {
+      const r = await api.history.update(selected.id, editText)
+      if (r.ok) {
+        toast.success('已保存修改')
+        // 同步本地列表，避免刷新才看到
+        setList((prev) => prev.map((h) => (h.id === selected.id ? { ...h, text: editText, edited: true } : h)))
+        setSelected((prev) => (prev ? { ...prev, text: editText, edited: true } : prev))
+      } else {
+        toast.error('保存失败：记录不存在或已被清理')
+      }
+    } catch (e: any) {
+      toast.error('保存失败：' + (e?.message || '未知错误'))
+    } finally {
+      setSaving(false)
+    }
+  }, [selected, editText])
 
   return (
     <div className="space-y-6">
@@ -68,16 +96,15 @@ export function HistoryPage() {
                     <TableCell className="font-mono tabular-nums">{m.noteCount ?? 0}</TableCell>
                     <TableCell className="font-mono tabular-nums">{m.commitCount ?? 0}</TableCell>
                     <TableCell>
-                      <Badge variant={degraded ? 'warning' : 'success'}>{degraded ? '含降级' : '完成'}</Badge>
+                      <Badge variant={degraded ? 'warning' : 'success'}>
+                        {degraded ? '含降级' : h.edited ? '已编辑' : '完成'}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          setSelected(h)
-                          navigator.clipboard?.writeText(h.text || '')
-                        }}
+                        onClick={() => openEntry(h)}
                       >
                         <Eye />
                         查看
@@ -98,22 +125,37 @@ export function HistoryPage() {
               <HistoryIcon className="h-5 w-5" />
               {selected?.type} · {selected?.rangeStart || '—'}
               {selected?.rangeEnd ? `~${selected.rangeEnd.slice(5)}` : ''}
+              {selected?.edited && <Badge variant="muted">已编辑</Badge>}
             </DialogTitle>
           </DialogHeader>
-          <pre className="max-h-[50vh] overflow-auto rounded-md border bg-zinc-950 p-4 font-mono text-sm leading-relaxed text-slate-200">
-            {selected?.text || '（无内容）'}
-          </pre>
+          <textarea
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            spellCheck={false}
+            className="max-h-[50vh] min-h-[200px] w-full resize-y rounded-md border bg-zinc-950 p-4 font-mono text-sm leading-relaxed text-slate-200 outline-none focus:ring-2 focus:ring-ring"
+          />
           <DialogFooter>
             <Button
               variant="outline"
               onClick={() => {
-                navigator.clipboard?.writeText(selected?.text || '')
+                navigator.clipboard?.writeText(editText)
                 toast.success('已复制')
               }}
             >
               复制全文
             </Button>
-            <Button onClick={() => setSelected(null)}>关闭</Button>
+            <Button
+              variant="outline"
+              onClick={() => selected && setEditText(selected.text || '')}
+              disabled={!selected || editText === (selected?.text || '')}
+            >
+              撤销改动
+            </Button>
+            <Button onClick={saveEdit} disabled={saving || !selected || editText === (selected?.text || '')}>
+              {saving ? <Loader2 className="animate-spin" /> : null}
+              保存
+            </Button>
+            <Button variant="ghost" onClick={() => setSelected(null)}>关闭</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

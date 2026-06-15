@@ -25,7 +25,7 @@ interface NavSection {
   items: NavItem[]
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ children, isMac }: { children: React.ReactNode; isMac?: boolean }) {
   const { page, navigate } = useNav()
   const { config } = useConfig()
 
@@ -96,11 +96,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   ]
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* 标题栏（可拖拽） */}
+      {/* macOS hiddenInset 下交通灯按钮浮在内容之上，需在左侧预留约 80px 空间 */}
       <header
         data-app-region="drag"
-        className="flex h-[38px] flex-shrink-0 items-center border-b bg-background/70 px-4 backdrop-blur"
+        className={cn(
+          'flex h-[38px] flex-shrink-0 items-center border-b bg-background/70 backdrop-blur',
+          isMac ? 'pl-[80px] pr-4' : 'px-4'
+        )}
       >
         <div className="flex min-w-[56px] items-center text-primary">
           <LineChart className="h-[15px] w-[15px]" />
@@ -116,7 +120,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <aside className="flex w-[240px] flex-shrink-0 flex-col overflow-y-auto border-r bg-sidebar">
           <div className="border-b px-5 pb-4 pt-5">
             <h1 className="text-xl font-bold tracking-tight">WeekLog</h1>
-            <span className="font-mono text-xs text-muted-foreground">v1.1.0 · 本地运行</span>
+            <span className="font-mono text-xs text-muted-foreground">v1.2.1 · 本地运行</span>
           </div>
           <nav className="flex-1 px-3 pb-3 pt-4">
             {sections.map((sec) => (

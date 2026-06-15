@@ -10,10 +10,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { ProjectSelect } from '@/components/ProjectSelect'
 import type { Note, MemoryInferResult } from '@/types/weeklog'
 
 type Filter = 'all' | 'project' | 'misc'
@@ -154,7 +154,7 @@ export function NotesPage() {
     return [...map.keys()].sort().reverse().map((date) => ({ date, items: map.get(date)! }))
   }, [filtered])
 
-  const projects = config?.repos.map((r) => ({ name: r.name, label: r.alias || r.name })) ?? []
+  const projects = config?.repos.map((r) => ({ value: r.name, label: r.alias || r.name })) ?? []
 
   return (
     <div className="space-y-6">
@@ -178,18 +178,11 @@ export function NotesPage() {
             </div>
             <div className="min-w-[150px] space-y-1.5">
               <Label>项目</Label>
-              <Select
-                value={noteProject || '__misc__'}
-                onValueChange={(v) => setNoteProject(v === '__misc__' ? '' : v)}
-              >
-                <SelectTrigger><SelectValue placeholder="日常工作（通用）" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__misc__">日常工作（通用）</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.name} value={p.name}>{p.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ProjectSelect
+                value={noteProject}
+                onChange={setNoteProject}
+                options={projects}
+              />
             </div>
             <div className="min-w-[140px] space-y-1.5">
               <Label>日期</Label>

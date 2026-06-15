@@ -23,11 +23,16 @@ contextBridge.exposeInMainWorld('weeklog', {
     set: (provider, key) => ipcRenderer.invoke('secrets:set', { provider, key }),
     clear: (provider) => ipcRenderer.invoke('secrets:clear', { provider }),
   },
+  ai: {
+    /** 用当前编辑中的 cfg + apiKey 做一次最小连接测试，返回 { ok, message, model?, latencyMs? } */
+    test: (cfg, apiKey) => ipcRenderer.invoke('ai:test', { cfg, apiKey }),
+  },
   repo: {
     validate: (p) => ipcRenderer.invoke('repo:validate', p),
     add: (r) => ipcRenderer.invoke('repo:add', r),
     update: (id, patch) => ipcRenderer.invoke('repo:update', { id, patch }),
     remove: (id) => ipcRenderer.invoke('repo:remove', id),
+    scan: (rootDir, maxDepth) => ipcRenderer.invoke('repo:scan', { rootDir, maxDepth }),
   },
   notes: {
     add: (n) => ipcRenderer.invoke('notes:add', n),
@@ -45,6 +50,7 @@ contextBridge.exposeInMainWorld('weeklog', {
   history: {
     list: () => ipcRenderer.invoke('history:list'),
     save: (e) => ipcRenderer.invoke('history:save', e),
+    update: (id, text) => ipcRenderer.invoke('history:update', { id, text }),
   },
   dialog: {
     pickFolder: () => ipcRenderer.invoke('dialog:pickFolder'),

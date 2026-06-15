@@ -54,7 +54,7 @@ export function Statusbar() {
       )}
       <span className="ml-auto flex items-center gap-3">
         <TaskIndicator />
-        <span>WeekLog v1.2.0</span>
+        <span>WeekLog v1.2.1</span>
       </span>
     </footer>
   )
