@@ -5,6 +5,7 @@
  */
 const { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, globalShortcut, ipcMain, Notification } = require('electron')
 const path = require('path')
+const { fileURLToPath } = require('url')
 
 // Windows 控制台默认 GBK 编码，中文日志会乱码。强制 stdout/stderr 为 UTF-8。
 if (process.platform === 'win32') {
@@ -30,6 +31,7 @@ const RENDERER_DIR = path.join(__dirname, '..', 'renderer')
 const APP_ICON = path.join(__dirname, '..', '..', 'build', 'icon.png')
 // 开发模式直连 Vite dev server（HMR）；生产模式加载打包产物 dist/
 const DEV_SERVER_URL = process.env.WEEKLOG_DEV ? 'http://localhost:5173' : ''
+const DEV_SERVER_ORIGIN = DEV_SERVER_URL ? new URL(DEV_SERVER_URL).origin : ''
 
 let mainWindow = null
 let quickNoteWin = null
@@ -42,6 +44,26 @@ let currentShortcut = SHORTCUT_DEFAULT
 function isDark() { return nativeTheme.shouldUseDarkColors }
 function windowBg() { return isDark() ? '#0b1020' : '#eef2fb' }
 function getAppIconPath() { return APP_ICON }
+
+function isAllowedRendererUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl)
+    if (DEV_SERVER_ORIGIN && u.origin === DEV_SERVER_ORIGIN) return true
+    if (u.protocol !== 'file:') return false
+    const target = path.normalize(fileURLToPath(u))
+    const root = path.normalize(path.join(RENDERER_DIR, 'dist'))
+    return target === root || target.startsWith(root + path.sep)
+  } catch {
+    return false
+  }
+}
+
+function hardenWindow(win) {
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedRendererUrl(url)) event.preventDefault()
+  })
+}
 
 // ── 主窗口 ──
 function createWindow() {
@@ -59,9 +81,10 @@ function createWindow() {
       preload: PRELOAD,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   })
+  hardenWindow(mainWindow)
 
   // 生产用 loadFile（正确处理 Windows 路径）；开发直连 Vite dev server
   if (DEV_SERVER_URL) {
@@ -118,9 +141,10 @@ function createQuickNoteWindow() {
       preload: PRELOAD,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   })
+  hardenWindow(quickNoteWin)
 
   if (DEV_SERVER_URL) {
     quickNoteWin.loadURL(DEV_SERVER_URL + '/quicknote.html')

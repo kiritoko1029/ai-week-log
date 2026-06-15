@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('weeklog', {
   },
   secrets: {
     available: () => ipcRenderer.invoke('secrets:available'),
-    get: (provider) => ipcRenderer.invoke('secrets:get', { provider }),
+    status: (provider) => ipcRenderer.invoke('secrets:status', { provider }),
     set: (provider, key) => ipcRenderer.invoke('secrets:set', { provider, key }),
     clear: (provider) => ipcRenderer.invoke('secrets:clear', { provider }),
   },
@@ -61,7 +61,7 @@ contextBridge.exposeInMainWorld('weeklog', {
     syncNow: (direction) => ipcRenderer.invoke('webdav:syncNow', { direction }),
     status: () => ipcRenderer.invoke('webdav:status'),
     savePassword: (password) => ipcRenderer.invoke('webdav:savePassword', { password }),
-    getPassword: () => ipcRenderer.invoke('webdav:getPassword'),
+    passwordStatus: () => ipcRenderer.invoke('webdav:passwordStatus'),
     clearPassword: () => ipcRenderer.invoke('webdav:clearPassword'),
   },
   memory: {

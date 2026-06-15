@@ -20,6 +20,47 @@ function basicAuth(username, password) {
   return 'Basic ' + Buffer.from(`${username || ''}:${password || ''}`, 'utf8').toString('base64')
 }
 
+function isPrivateHostname(hostname) {
+  const h = String(hostname || '').toLowerCase()
+  if (!h) return true
+  if (h === 'localhost' || h.endsWith('.localhost')) return true
+  if (h === '::1' || h === '[::1]') return true
+  if (h.startsWith('127.')) return true
+  if (h.startsWith('10.')) return true
+  if (h.startsWith('192.168.')) return true
+  const parts = h.split('.').map((p) => Number(p))
+  if (parts.length === 4 && parts.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true
+    if (parts[0] === 169 && parts[1] === 254) return true
+    if (parts[0] === 0) return true
+  }
+  if (h === 'fc00::' || h === 'fe80::' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80:')) return true
+  return false
+}
+
+function normalizeWebdavBaseUrl(input, opts = {}) {
+  const raw = String(input || '').trim()
+  if (!raw) throw new Error('未配置 WebDAV URL')
+  let parsed
+  try {
+    parsed = new URL(raw)
+  } catch {
+    throw new Error('WebDAV URL 格式无效')
+  }
+  const allowInsecure = opts.allowInsecure || process.env.WEEKLOG_ALLOW_INSECURE_WEBDAV === '1'
+  const allowPrivateHosts = opts.allowPrivateHosts || process.env.WEEKLOG_ALLOW_PRIVATE_WEBDAV === '1'
+  if (parsed.protocol !== 'https:' && !(allowInsecure && parsed.protocol === 'http:')) {
+    throw new Error('WebDAV URL 必须使用 HTTPS')
+  }
+  if (!allowPrivateHosts && isPrivateHostname(parsed.hostname)) {
+    throw new Error('WebDAV URL 不能指向本机或私有网络地址')
+  }
+  parsed.hash = ''
+  parsed.search = ''
+  if (!parsed.pathname.endsWith('/')) parsed.pathname += '/'
+  return parsed.toString()
+}
+
 /** 规范化 URL：确保以 / 结尾，拼 path 时去掉重复斜杠 */
 function joinUrl(base, rel) {
   const b = base.endsWith('/') ? base : base + '/'
@@ -289,6 +330,38 @@ function wantPull(direction) {
 
 // ── 按 id 并集合并 JSON（用于 index.json / history.json）──
 
+function itemKey(item, idField) {
+  return (item && item[idField]) || JSON.stringify(item)
+}
+
+function itemTimestamp(item) {
+  return (item && (item.updatedAt || item._updatedAt || item.createdAt)) || ''
+}
+
+function mergeJsonArraysById(localArr, remoteArr, idField) {
+  const byId = new Map()
+  for (const item of localArr) {
+    byId.set(itemKey(item, idField), item)
+  }
+  let pulled = 0
+  for (const item of remoteArr) {
+    const k = itemKey(item, idField)
+    const existing = byId.get(k)
+    if (!existing) {
+      byId.set(k, item)
+      pulled++
+      continue
+    }
+    const localUp = itemTimestamp(existing)
+    const remoteUp = itemTimestamp(item)
+    if (remoteUp && (!localUp || remoteUp > localUp)) {
+      byId.set(k, item)
+      pulled++
+    }
+  }
+  return { items: [...byId.values()], pulled }
+}
+
 async function syncMergedJson(remoteUrl, localPath, creds, direction, idField) {
   let pulled = 0
   let pushed = 0
@@ -310,33 +383,11 @@ async function syncMergedJson(remoteUrl, localPath, creds, direction, idField) {
     }
   }
 
-  // 按 id 并集（远端优先——同 id 取远端，新增 id 各自并入）
-  const byId = new Map()
-  for (const item of localArr) {
-    const k = (item && item[idField]) || JSON.stringify(item)
-    byId.set(k, { item, src: 'local' })
-  }
   let merged = false
-  for (const item of remoteArr) {
-    const k = (item && item[idField]) || JSON.stringify(item)
-    if (!byId.has(k)) {
-      byId.set(k, { item, src: 'remote-new' })
-      merged = true
-      pulled++
-    } else {
-      // 同 id：取 updatedAt 更新者
-      const exist = byId.get(k)
-      const localUp = (item && (item.updatedAt || item._updatedAt)) || ''
-      const remoteUp = (exist.item && (exist.item.updatedAt || exist.item._updatedAt)) || ''
-      if (remoteUp > localUp) {
-        byId.set(k, { item, src: 'remote-upd' })
-        merged = true
-        pulled++
-      }
-    }
-  }
-
-  const out = [...byId.values()].map((v) => v.item)
+  const mergedResult = mergeJsonArraysById(localArr, remoteArr, idField)
+  const out = mergedResult.items
+  pulled = mergedResult.pulled
+  merged = pulled > 0
 
   if (merged && wantPull(direction)) {
     writeLocalFile(localPath, JSON.stringify(out, null, 2))
@@ -351,9 +402,9 @@ async function syncMergedJson(remoteUrl, localPath, creds, direction, idField) {
       if (!Array.isArray(remoteExisting)) remoteExisting = []
     } catch {}
     // 推送新增/更新的本地条目
-    const remoteIds = new Set(remoteExisting.map((i) => (i && i[idField]) || JSON.stringify(i)))
+    const remoteIds = new Set(remoteExisting.map((i) => itemKey(i, idField)))
     const toPush = out.filter((i) => {
-      const k = (i && i[idField]) || JSON.stringify(i)
+      const k = itemKey(i, idField)
       return !remoteIds.has(k) || true // 全量回写，保证远端也包含并集
     })
     if (toPush.length !== remoteExisting.length || JSON.stringify(toPush) !== JSON.stringify(remoteExisting)) {
@@ -474,9 +525,9 @@ async function syncConfig(remoteUrl, localPath, creds, direction) {
 // ── 测试连接 ──
 
 async function testConnection({ url, username, password }) {
-  const base = url.endsWith('/') ? url : url + '/'
-  const creds = { username, password }
   try {
+    const base = normalizeWebdavBaseUrl(url)
+    const creds = { username, password }
     // 1) 先 PROPFIND 看根路径（/dav/）是否可达 + 凭证是否正确
     //    目的：早暴露认证/网络问题，且不依赖目标目录已存在
     try {
@@ -510,11 +561,10 @@ async function testConnection({ url, username, password }) {
 
 async function syncAll({ cfg, dir, password, direction = 'both' }) {
   const wcfg = cfg.webdav || {}
-  const url = (wcfg.url || '').trim()
+  const url = normalizeWebdavBaseUrl(wcfg.url || '')
   const username = wcfg.username || ''
-  if (!url) throw new Error('未配置 WebDAV URL')
   const creds = { username, password }
-  const base = url.endsWith('/') ? url : url + '/'
+  const base = url
 
   const result = { pulled: 0, pushed: 0, errors: [] }
   const t0 = Date.now()
@@ -590,4 +640,8 @@ module.exports = {
   syncAll,
   readStatus,
   STATUS_FILE,
+  _test: {
+    normalizeWebdavBaseUrl,
+    mergeJsonArraysById,
+  },
 }

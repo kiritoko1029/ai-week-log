@@ -25,10 +25,12 @@ export function SettingsPage() {
   const [notesDirDisplay, setNotesDirDisplay] = useState('—')
   const [showKey, setShowKey] = useState(false)
   const [apiKey, setApiKey] = useState('')
+  const [hasStoredKey, setHasStoredKey] = useState(false)
   const [keyAvailable, setKeyAvailable] = useState(true)
 
   // WebDAV 同步状态
   const [webdavPassword, setWebdavPassword] = useState('')
+  const [hasStoredWebdavPassword, setHasStoredWebdavPassword] = useState(false)
   const [showWebdavPass, setShowWebdavPass] = useState(false)
   const [webdavStatus, setWebdavStatus] = useState<WebdavStatus | null>(null)
   const [testingWebdav, setTestingWebdav] = useState(false)
@@ -52,16 +54,17 @@ export function SettingsPage() {
   // 加载当前 provider 的 API Key + notesDir
   useEffect(() => {
     if (!draft) return
-    api.secrets.get(draft.ai.provider).then((r) => {
-      setApiKey(r.key || '')
+    api.secrets.status(draft.ai.provider).then((r) => {
+      setHasStoredKey(r.hasKey)
       setKeyAvailable(r.available)
     })
+    setApiKey('')
     api.config.notesDir().then(setNotesDirDisplay)
-  }, [draft])
+  }, [draft?.ai?.provider])
 
   // 加载 WebDAV 密码 + 同步状态
   useEffect(() => {
-    api.webdav.getPassword().then((r) => setWebdavPassword(r.password || ''))
+    api.webdav.passwordStatus().then((r) => setHasStoredWebdavPassword(r.hasPassword))
     api.webdav.status().then(setWebdavStatus)
   }, [])
 
@@ -87,8 +90,12 @@ export function SettingsPage() {
       patch((c) => {
         c.ai.provider = p
       })
-      // 切换 provider 后加载对应 key
-      api.secrets.get(p).then((r) => setApiKey(r.key || ''))
+      // 切换 provider 后只刷新配置状态，不回显已保存密钥
+      api.secrets.status(p).then((r) => {
+        setHasStoredKey(r.hasKey)
+        setKeyAvailable(r.available)
+      })
+      setApiKey('')
     },
     [patch]
   )
@@ -102,22 +109,32 @@ export function SettingsPage() {
     if (!draft) return
     await api.secrets.clear(draft.ai.provider)
     setApiKey('')
+    setHasStoredKey(false)
     toast.success('API Key 已清除')
   }, [draft])
+
+  const clearWebdavPassword = useCallback(async () => {
+    await api.webdav.clearPassword()
+    setWebdavPassword('')
+    setHasStoredWebdavPassword(false)
+    toast.success('WebDAV 密码已清除')
+  }, [])
 
   const handleSave = useCallback(async () => {
     if (!draft) return
     draft.ui = draft.ui || { theme: 'auto', quickNoteShortcut: recorder.accel }
     draft.ui.quickNoteShortcut = recorder.accel
-    // API Key：与当前存储不同才写入
-    const curKey = (await api.secrets.get(draft.ai.provider)).key || ''
-    if (apiKey !== curKey) {
+    // API Key：只在用户输入新值时写入，避免从主进程回读明文
+    if (apiKey.trim()) {
       await api.secrets.set(draft.ai.provider, apiKey)
+      setHasStoredKey(true)
+      setApiKey('')
     }
-    // WebDAV 密码：与当前存储不同才写入
-    const curWd = (await api.webdav.getPassword()).password || ''
-    if (webdavPassword !== curWd) {
+    // WebDAV 密码：只在用户输入新值时写入，避免从主进程回读明文
+    if (webdavPassword.trim()) {
       await api.webdav.savePassword(webdavPassword)
+      setHasStoredWebdavPassword(true)
+      setWebdavPassword('')
     }
     await save(draft)
     const sr = await api.shortcut.apply()
@@ -305,7 +322,7 @@ export function SettingsPage() {
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle>AI 提供商</CardTitle>
-          <KeyBadge hasKey={!!apiKey} />
+          <KeyBadge hasKey={hasStoredKey || !!apiKey} />
         </CardHeader>
         <CardContent className="space-y-4">
           <RadioGroup
@@ -358,7 +375,7 @@ export function SettingsPage() {
                 type={showKey ? 'text' : 'password'}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-...（留空则用环境变量）"
+                placeholder={hasStoredKey ? '已保存；输入新 Key 可替换' : 'sk-...（留空则用环境变量）'}
                 autoComplete="off"
                 className="flex-1"
               />
@@ -376,7 +393,7 @@ export function SettingsPage() {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              {apiKey ? '✓ 已填写' : '未填写，将使用环境变量'}
+              {apiKey ? '✓ 已输入新 Key，保存后生效' : hasStoredKey ? '✓ 已保存 Key（不回显明文）' : '未填写，将使用环境变量'}
               {!keyAvailable && '（当前环境不支持系统加密，将以明文存储）'} · 环境变量{' '}
               <code className="rounded bg-muted px-1.5 py-0.5 font-mono">
                 {prov === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY'}
@@ -542,7 +559,7 @@ export function SettingsPage() {
                 type={showWebdavPass ? 'text' : 'password'}
                 value={webdavPassword}
                 onChange={(e) => setWebdavPassword(e.target.value)}
-                placeholder="••••••"
+                placeholder={hasStoredWebdavPassword ? '已保存；输入新密码可替换' : '••••••'}
                 autoComplete="off"
                 disabled={!draft.webdav.enabled}
                 className="flex-1"
@@ -555,7 +572,14 @@ export function SettingsPage() {
                 {testingWebdav ? <RefreshCw className="animate-spin" /> : <Zap />}
                 测试
               </Button>
+              <Button variant="outline" type="button" onClick={clearWebdavPassword} disabled={!draft.webdav.enabled || !hasStoredWebdavPassword}>
+                <Trash2 />
+                清除
+              </Button>
             </div>
+            <p className="text-xs text-muted-foreground">
+              {webdavPassword ? '✓ 已输入新密码，保存后生效' : hasStoredWebdavPassword ? '✓ 已保存密码（不回显明文）' : '未保存密码'}
+            </p>
           </div>
           <Separator />
           <div className="space-y-1.5">

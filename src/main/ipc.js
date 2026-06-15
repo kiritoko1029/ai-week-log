@@ -24,6 +24,7 @@ const memory = require('./memory')
 const tasks = require('./tasks')
 
 const HISTORY_FILE = 'history.json'
+const SECRET_PROVIDERS = new Set(['openai', 'anthropic', 'webdav'])
 
 function newId() {
   return 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
@@ -42,6 +43,11 @@ function readHistory(dir) {
 function writeHistory(dir, list) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, HISTORY_FILE), JSON.stringify(list, null, 2), 'utf8')
+}
+
+function normalizeSecretProvider(provider, fallback) {
+  const p = String(provider || fallback || '').trim()
+  return SECRET_PROVIDERS.has(p) ? p : fallback
 }
 
 function registerIpc({ app, getMainWindow }) {
@@ -113,15 +119,15 @@ function registerIpc({ app, getMainWindow }) {
 
   // ── API Key（软件内填写，加密存储于系统钥匙串）──
   ipcMain.handle('secrets:available', () => secrets.isAvailable())
-  ipcMain.handle('secrets:get', (_e, { provider } = {}) => ({
-    key: secrets.getKey(userDataDir, provider || getConfig().ai.provider),
+  ipcMain.handle('secrets:status', (_e, { provider } = {}) => ({
+    hasKey: secrets.hasKey(userDataDir, normalizeSecretProvider(provider, getConfig().ai.provider)),
     available: secrets.isAvailable(),
   }))
   ipcMain.handle('secrets:set', (_e, { provider, key } = {}) =>
-    secrets.setKey(userDataDir, provider || getConfig().ai.provider, key)
+    secrets.setKey(userDataDir, normalizeSecretProvider(provider, getConfig().ai.provider), key)
   )
   ipcMain.handle('secrets:clear', (_e, { provider } = {}) => {
-    secrets.clearKey(userDataDir, provider || getConfig().ai.provider)
+    secrets.clearKey(userDataDir, normalizeSecretProvider(provider, getConfig().ai.provider))
     return { ok: true }
   })
 
@@ -217,34 +223,40 @@ function registerIpc({ app, getMainWindow }) {
       detail: '采集 commit + 加载笔记…',
       progress: { done: 0, total: 0, label: '采集中' },
     })
-    const report = await generate({
-      cfg,
-      apiKey: key,
-      rangeOpts: rangeOpts || {},
-      notesDir: getNotesDir(),
-      options: { ...options, userDataDir },
-      onProgress: (msg) => {
-        // 1) 兼容旧事件
-        try { event.sender.send('generate:progress', msg) } catch {}
-        // 2) 更新任务系统
-        tasks.update(taskId, {
-          detail: `AI 融合生成中… ${msg.done}/${msg.total}（${msg.project}）`,
-          progress: { done: msg.done, total: msg.total, label: msg.project || '' },
-        })
-      },
-    })
-    if (report.error) {
-      tasks.error(taskId, report.error)
-    } else {
-      const m = report.meta || {}
-      tasks.done(taskId, {
-        commitCount: m.commitCount,
-        noteCount: m.noteCount,
-        bucketCount: m.bucketCount,
-        durationMs: m.durationMs,
+    try {
+      const report = await generate({
+        cfg,
+        apiKey: key,
+        rangeOpts: rangeOpts || {},
+        notesDir: getNotesDir(),
+        options: { ...options, userDataDir },
+        onProgress: (msg) => {
+          // 1) 兼容旧事件
+          try { event.sender.send('generate:progress', msg) } catch {}
+          // 2) 更新任务系统
+          tasks.update(taskId, {
+            detail: `AI 融合生成中… ${msg.done}/${msg.total}（${msg.project}）`,
+            progress: { done: msg.done, total: msg.total, label: msg.project || '' },
+          })
+        },
       })
+      if (report.error) {
+        tasks.error(taskId, report.error)
+      } else {
+        const m = report.meta || {}
+        tasks.done(taskId, {
+          commitCount: m.commitCount,
+          noteCount: m.noteCount,
+          bucketCount: m.bucketCount,
+          durationMs: m.durationMs,
+        })
+      }
+      return report
+    } catch (e) {
+      const message = (e && e.message) || '生成失败'
+      tasks.error(taskId, message)
+      return { error: message, failedUnits: [] }
     }
-    return report
   })
 
   // ── 历史 ──
@@ -281,7 +293,7 @@ function registerIpc({ app, getMainWindow }) {
 
   // ── WebDAV 同步 ──
   ipcMain.handle('webdav:test', async (_e, { url, username, password }) => {
-    return webdav.testConnection({ url, username, password })
+    return webdav.testConnection({ url, username, password: password || secrets.getKey(userDataDir, 'webdav') })
   })
   ipcMain.handle('webdav:syncNow', async (_e, { direction } = {}) => {
     const cfg = getConfig()
@@ -306,8 +318,8 @@ function registerIpc({ app, getMainWindow }) {
     secrets.setKey(userDataDir, 'webdav', password)
     return { ok: true }
   })
-  ipcMain.handle('webdav:getPassword', () => ({
-    password: secrets.getKey(userDataDir, 'webdav'),
+  ipcMain.handle('webdav:passwordStatus', () => ({
+    hasPassword: secrets.hasKey(userDataDir, 'webdav'),
     available: secrets.isAvailable(),
   }))
   ipcMain.handle('webdav:clearPassword', () => {

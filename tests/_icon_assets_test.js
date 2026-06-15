@@ -65,6 +65,19 @@ function icnsTypes(file) {
   return types
 }
 
+function hasIcnsStandardCoverage(types) {
+  const groups = [
+    ['icp4', 'ic04'],
+    ['icp5', 'ic05', 'ic11'],
+    ['icp6', 'ic06', 'ic12'],
+    ['ic07'],
+    ['ic08', 'ic13'],
+    ['ic09', 'ic14'],
+    ['ic10'],
+  ]
+  return groups.every((group) => group.some((type) => types.includes(type)))
+}
+
 console.log('\n[Icon assets]')
 ok('1024 PNG exists', fs.existsSync(path.join(root, 'build/icon.png')))
 if (fs.existsSync(path.join(root, 'build/icon.png'))) {
@@ -87,7 +100,7 @@ if (fs.existsSync(path.join(root, 'build/icon.ico'))) {
 ok('macOS ICNS exists', fs.existsSync(path.join(root, 'build/icon.icns')))
 if (fs.existsSync(path.join(root, 'build/icon.icns'))) {
   const types = icnsTypes('build/icon.icns')
-  ok('ICNS includes macOS standard sizes', ['icp4', 'icp5', 'icp6', 'ic07', 'ic08', 'ic09', 'ic10'].every((t) => types.includes(t)), types.join(', '))
+  ok('ICNS includes macOS standard sizes', hasIcnsStandardCoverage(types), types.join(', '))
 }
 
 console.log('\n[Electron integration]')

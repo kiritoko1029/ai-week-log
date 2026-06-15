@@ -154,8 +154,13 @@ export interface HistoryEntry {
   edited?: boolean
 }
 
-export interface SecretsResult {
-  key: string
+export interface SecretStatusResult {
+  hasKey: boolean
+  available: boolean
+}
+
+export interface WebdavPasswordStatusResult {
+  hasPassword: boolean
   available: boolean
 }
 
@@ -258,7 +263,7 @@ export interface WeeklogAPI {
   }
   secrets: {
     available: () => Promise<boolean>
-    get: (provider: 'openai' | 'anthropic') => Promise<SecretsResult>
+    status: (provider: 'openai' | 'anthropic') => Promise<SecretStatusResult>
     set: (provider: 'openai' | 'anthropic', key: string) => Promise<void>
     clear: (provider: 'openai' | 'anthropic') => Promise<void>
   }
@@ -296,7 +301,7 @@ export interface WeeklogAPI {
     syncNow: (direction: 'pull' | 'push' | 'both') => Promise<WebdavSyncResult>
     status: () => Promise<WebdavStatus>
     savePassword: (password: string) => Promise<{ ok: boolean }>
-    getPassword: () => Promise<{ password: string; available: boolean }>
+    passwordStatus: () => Promise<WebdavPasswordStatusResult>
     clearPassword: () => Promise<{ ok: boolean }>
   }
   memory: {
