@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database } from 'lucide-react'
+import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw } from 'lucide-react'
 import { ProviderBadge } from '@/components/BrandIcons'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import type { Config, MemoryIndexItem, WebdavStatus, MemoryQueueStatus } from '@/types/weeklog'
+import type { Config, MemoryIndexItem, WebdavStatus, MemoryQueueStatus, UpdateStatus } from '@/types/weeklog'
 
 export function SettingsPage() {
   const { config, save } = useConfig()
@@ -44,6 +44,11 @@ export function SettingsPage() {
   const [memQueue, setMemQueue] = useState<MemoryQueueStatus | null>(null)
   const [rebuildingMem, setRebuildingMem] = useState(false)
   const [memDialogOpen, setMemDialogOpen] = useState(false)
+
+  // 应用更新
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [downloadingUpdate, setDownloadingUpdate] = useState(false)
 
   const recorder = useShortcutRecorder(config?.ui?.quickNoteShortcut || 'CommandOrControl+Shift+L')
 
@@ -75,6 +80,14 @@ export function SettingsPage() {
       api.memory.queueStatus().then(setMemQueue)
     }
   }, [memDialogOpen])
+
+  useEffect(() => {
+    api.updates.status().then(setUpdateStatus).catch(() => {})
+    const off = api.updates.onUpdate((payload) => {
+      if (payload.type === 'status') setUpdateStatus(payload.status)
+    })
+    return off
+  }, [])
 
   const patch = useCallback((updater: (c: Config) => void) => {
     setDraft((prev) => {
@@ -218,6 +231,43 @@ export function SettingsPage() {
     toast.success('已删除')
   }, [])
 
+  const checkForUpdates = useCallback(async () => {
+    setCheckingUpdate(true)
+    try {
+      const r = await api.updates.check()
+      setUpdateStatus(r)
+      if (r.phase === 'available') toast.success(`发现新版本 ${r.latestVersion || ''}`.trim())
+      else if (r.phase === 'not-available') toast.success('当前已是最新版本')
+      else if (r.phase === 'disabled') toast.info(r.error || '自动更新仅在安装包版本中可用')
+      else if (r.phase === 'error') toast.error(r.error || '检查更新失败')
+    } catch (e: any) {
+      toast.error('检查更新失败：' + (e?.message || '未知错误'))
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }, [])
+
+  const downloadUpdate = useCallback(async () => {
+    setDownloadingUpdate(true)
+    try {
+      const r = await api.updates.download()
+      setUpdateStatus(r)
+      if (r.phase === 'downloaded') toast.success('更新已下载，重启后安装')
+    } catch (e: any) {
+      toast.error('下载更新失败：' + (e?.message || '未知错误'))
+    } finally {
+      setDownloadingUpdate(false)
+    }
+  }, [])
+
+  const installUpdate = useCallback(async () => {
+    try {
+      await api.updates.install()
+    } catch (e: any) {
+      toast.error('安装更新失败：' + (e?.message || '未知错误'))
+    }
+  }, [])
+
   if (!draft) {
     return <div className="py-8 text-center text-sm text-muted-foreground">加载配置中…</div>
   }
@@ -264,6 +314,54 @@ export function SettingsPage() {
               </div>
               <p className="text-xs text-muted-foreground">全局生效（含最小化到托盘时）。需含 Ctrl / Alt / Shift 至少一个修饰键</p>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 应用更新 */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>应用更新</CardTitle>
+          <Badge variant={updateStatus?.phase === 'available' ? 'success' : updateStatus?.phase === 'error' ? 'destructive' : 'secondary'}>
+            {updateStatus ? updatePhaseLabel(updateStatus.phase) : '读取中'}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-6">
+            <div className="min-w-[180px] space-y-1.5">
+              <Label>当前版本</Label>
+              <p className="font-mono text-sm">{updateStatus?.currentVersion || '—'}</p>
+            </div>
+            <div className="min-w-[180px] space-y-1.5">
+              <Label>最新版本</Label>
+              <p className="font-mono text-sm">{updateStatus?.latestVersion || '—'}</p>
+            </div>
+            <div className="min-w-[220px] flex-1 space-y-1.5">
+              <Label>状态</Label>
+              <p className="text-sm text-muted-foreground">{updateStatusText(updateStatus)}</p>
+            </div>
+          </div>
+          {updateStatus?.phase === 'downloading' && updateStatus.progress && (
+            <div className="space-y-1.5">
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div className="h-full bg-primary transition-all" style={{ width: `${Math.round(updateStatus.progress.percent || 0)}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground">下载进度 {Math.round(updateStatus.progress.percent || 0)}%</p>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" onClick={checkForUpdates} disabled={checkingUpdate || !updateStatus?.canCheck}>
+              {checkingUpdate || updateStatus?.phase === 'checking' ? <RefreshCw className="animate-spin" /> : <RefreshCw />}
+              检查更新
+            </Button>
+            <Button type="button" variant="outline" onClick={downloadUpdate} disabled={downloadingUpdate || !updateStatus?.canDownload}>
+              {downloadingUpdate || updateStatus?.phase === 'downloading' ? <Download className="animate-pulse" /> : <Download />}
+              下载更新
+            </Button>
+            <Button type="button" onClick={installUpdate} disabled={!updateStatus?.canInstall}>
+              <RotateCw />
+              重启安装
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -781,4 +879,29 @@ function KeyBadge({ hasKey }: { hasKey: boolean }) {
   return (
     <Badge variant={hasKey ? 'success' : 'warning'}>{hasKey ? 'Key 已配置' : 'Key 未配置'}</Badge>
   )
+}
+
+function updatePhaseLabel(phase: UpdateStatus['phase']) {
+  const labels: Record<UpdateStatus['phase'], string> = {
+    disabled: '不可用',
+    idle: '待检查',
+    checking: '检查中',
+    available: '有更新',
+    'not-available': '已最新',
+    downloading: '下载中',
+    downloaded: '待安装',
+    error: '失败',
+  }
+  return labels[phase]
+}
+
+function updateStatusText(status: UpdateStatus | null) {
+  if (!status) return '正在读取更新状态…'
+  if (status.error) return status.error
+  if (status.phase === 'available') return `发现新版本 ${status.latestVersion || ''}，可以下载更新。`
+  if (status.phase === 'downloaded') return '更新已下载完成，重启应用后安装。'
+  if (status.phase === 'downloading') return `正在下载更新 ${Math.round(status.progress?.percent || 0)}%。`
+  if (status.phase === 'checking') return '正在检查是否有新版本。'
+  if (status.phase === 'not-available') return '当前版本已是最新。'
+  return '可以手动检查是否有新版本。'
 }

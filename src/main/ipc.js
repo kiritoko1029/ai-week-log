@@ -50,7 +50,7 @@ function normalizeSecretProvider(provider, fallback) {
   return SECRET_PROVIDERS.has(p) ? p : fallback
 }
 
-function registerIpc({ app, getMainWindow }) {
+function registerIpc({ app, getMainWindow, updater }) {
   const userDataDir = app.getPath('userData')
   const getConfig = () => loadConfig(userDataDir)
   const persist = (cfg) => {
@@ -72,6 +72,15 @@ function registerIpc({ app, getMainWindow }) {
       try { win.webContents.send('task:update', payload) } catch {}
     }
   })
+
+  if (updater && typeof updater.setSender === 'function') {
+    updater.setSender((payload) => {
+      const win = getMainWindow()
+      if (win && !win.isDestroyed()) {
+        try { win.webContents.send('updates:update', payload) } catch {}
+      }
+    })
+  }
 
   // 模型下载进度 → 推送到任务系统
   memory.setModelProgressCallback((info) => {
@@ -370,6 +379,12 @@ function registerIpc({ app, getMainWindow }) {
   ipcMain.handle('tasks:hasRunning', () => tasks.hasRunning())
   ipcMain.handle('tasks:remove', (_e, { id } = {}) => { tasks.remove(id); return { ok: true } })
   ipcMain.handle('tasks:clearFinished', () => { tasks.clearFinished(); return { ok: true } })
+
+  // ── 应用更新 ──
+  ipcMain.handle('updates:status', () => updater ? updater.status() : null)
+  ipcMain.handle('updates:check', () => updater ? updater.check({ manual: true }) : null)
+  ipcMain.handle('updates:download', () => updater ? updater.download() : null)
+  ipcMain.handle('updates:install', () => updater ? updater.install() : null)
 }
 
 module.exports = { registerIpc }

@@ -23,6 +23,7 @@ const { registerIpc } = require('./ipc')
 const { trayIconBuffer } = require('./icon')
 const { loadConfig } = require('./config')
 const { syncAll } = require('./webdav')
+const { createUpdaterController } = require('./updater')
 const secrets = require('./secrets')
 
 const SHORTCUT_DEFAULT = 'CommandOrControl+Shift+L'
@@ -39,6 +40,7 @@ let tray = null
 let isQuitting = false
 let trayHintShown = false
 let currentShortcut = SHORTCUT_DEFAULT
+let updater = null
 
 /** 当前主题是否解析为深色（依据 nativeTheme） */
 function isDark() { return nativeTheme.shouldUseDarkColors }
@@ -320,7 +322,8 @@ app.whenReady().then(() => {
 
   const cfg = loadConfig(app.getPath('userData'))
 
-  registerIpc({ app, getMainWindow: () => mainWindow })
+  updater = createUpdaterController({ app, getMainWindow: () => mainWindow })
+  registerIpc({ app, getMainWindow: () => mainWindow, updater })
 
   // 先应用主题，使窗口创建时底色正确（避免闪烁）
   applyNativeTheme(cfg.ui && cfg.ui.theme)
@@ -331,6 +334,7 @@ app.whenReady().then(() => {
 
   // ── WebDAV 启动自动拉取（异步、不阻塞、失败只 warn）──
   triggerAutoSync('pull')
+  updater.scheduleStartupCheck()
 
   // ── IPC ──
   ipcMain.on('quicknote:hide', () => hideQuickNote())

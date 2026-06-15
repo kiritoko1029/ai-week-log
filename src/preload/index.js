@@ -83,6 +83,17 @@ contextBridge.exposeInMainWorld('weeklog', {
       return () => ipcRenderer.removeListener('task:update', handler)
     },
   },
+  updates: {
+    status: () => ipcRenderer.invoke('updates:status'),
+    check: () => ipcRenderer.invoke('updates:check'),
+    download: () => ipcRenderer.invoke('updates:download'),
+    install: () => ipcRenderer.invoke('updates:install'),
+    onUpdate: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('updates:update', handler)
+      return () => ipcRenderer.removeListener('updates:update', handler)
+    },
+  },
   ui: {
     /** 同步原生外观（标题栏/窗口底色），返回当前是否深色 */
     setTheme: (theme) => ipcRenderer.invoke('ui:setTheme', theme),

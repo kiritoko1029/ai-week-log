@@ -250,6 +250,43 @@ export interface TaskUpdatePayload {
   id?: string
 }
 
+export type UpdatePhase =
+  | 'disabled'
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+
+export interface UpdateProgress {
+  percent: number
+  transferred?: number
+  total?: number
+  bytesPerSecond?: number
+}
+
+export interface UpdateStatus {
+  phase: UpdatePhase
+  currentVersion: string
+  latestVersion: string
+  releaseName?: string
+  releaseNotes?: string
+  progress: UpdateProgress | null
+  error: string
+  isPackaged: boolean
+  updatedAt: number
+  canCheck: boolean
+  canDownload: boolean
+  canInstall: boolean
+}
+
+export interface UpdatePayload {
+  type: 'status'
+  status: UpdateStatus
+}
+
 export interface WeeklogAPI {
   config: {
     get: () => Promise<Config>
@@ -318,6 +355,13 @@ export interface WeeklogAPI {
     remove: (id: string) => Promise<{ ok: boolean }>
     clearFinished: () => Promise<{ ok: boolean }>
     onUpdate: (cb: (payload: TaskUpdatePayload) => void) => () => void
+  }
+  updates: {
+    status: () => Promise<UpdateStatus>
+    check: () => Promise<UpdateStatus>
+    download: () => Promise<UpdateStatus>
+    install: () => Promise<UpdateStatus>
+    onUpdate: (cb: (payload: UpdatePayload) => void) => () => void
   }
   ui: {
     setTheme: (theme: 'auto' | 'light' | 'dark') => Promise<boolean>
