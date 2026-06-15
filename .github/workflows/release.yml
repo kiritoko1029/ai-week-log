@@ -28,19 +28,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        # package.json 已声明 packageManager: pnpm@11.6.0，无需指定 version
+        uses: pnpm/action-setup@v6
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           # electron 42 要求 Node >= 22.12
           node-version: 22
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build & package app
         # dist:win / dist:mac 脚本已内含 build:renderer（Vite 打包渲染层）
-        run: npm run ${{ matrix.dist_script }}
+        run: pnpm run ${{ matrix.dist_script }}
         env:
           # electron-builder 自动更新元信息（latest*.yml）需要；此处仅打包
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
