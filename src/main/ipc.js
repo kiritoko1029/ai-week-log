@@ -272,9 +272,19 @@ function registerIpc({ app, getMainWindow, updater }) {
   ipcMain.handle('history:list', () => readHistory(userDataDir))
   ipcMain.handle('history:save', (_e, entry) => {
     const list = readHistory(userDataDir)
-    list.unshift({ id: newId(), createdAt: new Date().toISOString(), ...entry })
+    // 同日/同周去重：以 (type, rangeStart) 为键，命中已有记录则原地覆盖，不追加副本
+    const existIdx = list.findIndex((h) => h.type === entry.type && h.rangeStart === entry.rangeStart)
+    let saved
+    if (existIdx >= 0) {
+      // 保留原 id（稳定标识），刷新正文/元数据/时间戳，重置人工编辑标记
+      saved = { ...list[existIdx], ...entry, createdAt: new Date().toISOString(), edited: false }
+      list[existIdx] = saved
+    } else {
+      saved = { id: newId(), createdAt: new Date().toISOString(), ...entry }
+      list.unshift(saved)
+    }
     writeHistory(userDataDir, list.slice(0, 200))
-    return list[0]
+    return saved
   })
   ipcMain.handle('history:update', (_e, { id, text } = {}) => {
     if (!id || typeof text !== 'string') return { ok: false }

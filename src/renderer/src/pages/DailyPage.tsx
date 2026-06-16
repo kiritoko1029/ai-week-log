@@ -1,10 +1,12 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { Play, Plus, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
 import { useGenerate } from '@/hooks/useGenerate'
+import { useExistingReport } from '@/hooks/useExistingReport'
 import { useNav } from '@/hooks/useNav'
 import { ReportPreview } from '@/components/ReportPreview'
+import { ExistingReportCard } from '@/components/ExistingReportCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -26,6 +28,10 @@ export function DailyPage() {
   const doGenerate = useCallback(() => {
     gen.run({ mode: 'daily', date }, { format, weekStart: config?.weekStart }, '日报')
   }, [gen, date, format, config])
+
+  // 当前日期下是否已有日报，用于展示「重新生成将覆盖」
+  const rangeOpts = useMemo(() => ({ mode: 'daily' as const, date }), [date])
+  const { existing, loading } = useExistingReport('日报', rangeOpts, { weekStart: config?.weekStart })
 
   return (
     <div className="space-y-6">
@@ -92,6 +98,9 @@ export function DailyPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* 已有日报：重新生成将覆盖 */}
+      <ExistingReportCard existing={existing} loading={loading} newReport={gen.report} />
 
       <Card>
         <CardHeader className="flex-row items-center justify-between">

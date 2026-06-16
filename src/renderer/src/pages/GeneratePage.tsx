@@ -4,8 +4,10 @@ import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
 import { useGenerate } from '@/hooks/useGenerate'
+import { useExistingReport } from '@/hooks/useExistingReport'
 import { todayISO } from '@/lib/dates'
 import { ReportPreview } from '@/components/ReportPreview'
+import { ExistingReportCard } from '@/components/ExistingReportCard'
 import { StatCard } from '@/components/StatCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -70,6 +72,10 @@ export function GeneratePage() {
     }),
     [notesEnabled, format, author, merge, config]
   )
+
+  // 当前选择范围（同日/同周）下的已有报告，用于展示「重新生成将覆盖」
+  const reportType = mode === 'daily' ? '日报' : '周报'
+  const { existing, loading } = useExistingReport(reportType, buildRange(), { weekStart: config?.weekStart })
 
   const refreshFusion = useCallback(async () => {
     setFusionLoading(true)
@@ -278,6 +284,9 @@ export function GeneratePage() {
         </Button>
         {gen.status && <span className="font-mono text-xs text-muted-foreground">{gen.status}</span>}
       </div>
+
+      {/* 已有报告（同日/同周）：重新生成将覆盖 */}
+      <ExistingReportCard existing={existing} loading={loading} newReport={gen.report} />
 
       {/* 报告预览 */}
       <Card>
