@@ -360,7 +360,7 @@ export function SettingsPage() {
             </Button>
             <Button type="button" onClick={installUpdate} disabled={!updateStatus?.canInstall}>
               <RotateCw />
-              重启安装
+              {typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '退出并安装' : '重启安装'}
             </Button>
           </div>
         </CardContent>
@@ -899,7 +899,10 @@ function updateStatusText(status: UpdateStatus | null) {
   if (!status) return '正在读取更新状态…'
   if (status.error) return status.error
   if (status.phase === 'available') return `发现新版本 ${status.latestVersion || ''}，可以下载更新。`
-  if (status.phase === 'downloaded') return '更新已下载完成，重启应用后安装。'
+  if (status.phase === 'downloaded') {
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+    return isMac ? '更新已下载完成，点击「退出并安装」将关闭应用并自动完成安装。' : '更新已下载完成，重启应用后安装。'
+  }
   if (status.phase === 'downloading') return `正在下载更新 ${Math.round(status.progress?.percent || 0)}%。`
   if (status.phase === 'checking') return '正在检查是否有新版本。'
   if (status.phase === 'not-available') return '当前版本已是最新。'
