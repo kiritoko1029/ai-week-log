@@ -85,7 +85,7 @@ function QuickNoteApp() {
   }, [loadProjects, applyTheme])
 
   return (
-    <div className="m-2.5 flex h-[calc(100%-20px)] flex-col overflow-hidden rounded-xl border bg-card shadow-2xl">
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-background">
       {/* 标题栏（可拖拽） */}
       <div
         data-app-region="drag"
@@ -114,7 +114,7 @@ function QuickNoteApp() {
           onKeyDown={onKeyDown}
           placeholder="例如：参加架构评审，确认了订单服务拆分方案…"
           autoFocus
-          className="min-h-[56px] flex-1 resize-none"
+          className="min-h-[56px] max-h-[100px] flex-1 resize-none overflow-hidden"
         />
         <div className="flex items-center gap-2">
           <Select
@@ -124,7 +124,7 @@ function QuickNoteApp() {
             <SelectTrigger className="max-w-[160px]">
               <SelectValue placeholder="日常工作（通用）" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="max-h-[160px]">
               <SelectItem value="__misc__">日常工作（通用）</SelectItem>
               {projects.map((p) => (
                 <SelectItem key={p.name} value={p.name}>{p.label}</SelectItem>

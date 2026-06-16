@@ -127,8 +127,8 @@ function createWindow() {
 function createQuickNoteWindow() {
   const iconPath = getAppIconPath()
   quickNoteWin = new BrowserWindow({
-    width: 480,
-    height: 190,
+    width: 560,
+    height: 240,
     frame: false,
     resizable: false,
     minimizable: false,
