@@ -141,18 +141,6 @@ export function AppShell({ children, isMac }: { children: React.ReactNode; isMac
         <aside className="flex w-[240px] flex-shrink-0 flex-col overflow-y-auto border-r bg-sidebar">
           <div className="border-b px-5 pb-4 pt-5">
             <h1 className="text-xl font-bold tracking-tight">WeekLog</h1>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs text-muted-foreground">v{__APP_VERSION__} · 本地运行</span>
-              <button
-                data-app-region="no-drag"
-                onClick={() => api.shell.openExternal('https://github.com/kiritoko1029/ai-week-log')}
-                className="text-muted-foreground transition-colors hover:text-foreground"
-                title="GitHub 仓库"
-                aria-label="GitHub 仓库"
-              >
-                <GithubIcon className="h-3.5 w-3.5" />
-              </button>
-            </div>
           </div>
           <nav className="flex-1 px-3 pb-3 pt-4">
             {sections.map((sec) => (
@@ -195,6 +183,18 @@ export function AppShell({ children, isMac }: { children: React.ReactNode; isMac
               </div>
             ))}
           </nav>
+          <div className="flex flex-shrink-0 items-center gap-2 border-t px-5 py-3">
+            <span className="font-mono text-xs text-muted-foreground">v{__APP_VERSION__}</span>
+            <button
+              data-app-region="no-drag"
+              onClick={() => api.shell.openExternal('https://github.com/kiritoko1029/ai-week-log')}
+              className="text-muted-foreground transition-colors hover:text-foreground"
+              title="GitHub 仓库"
+              aria-label="GitHub 仓库"
+            >
+              <GithubIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </aside>
 
         {/* 内容区 */}
