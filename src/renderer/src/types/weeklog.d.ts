@@ -49,7 +49,6 @@ export interface Config {
   }
   ai: {
     provider: 'openai' | 'anthropic'
-    maxInputTokens: number
     concurrency: number
     retries: number
     timeoutSeconds: number

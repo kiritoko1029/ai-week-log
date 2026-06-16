@@ -33,7 +33,6 @@ function defaultConfig() {
     },
     ai: {
       provider: 'anthropic', // openai | anthropic
-      maxInputTokens: 6000,
       concurrency: 3,
       retries: 3,
       timeoutSeconds: 60,

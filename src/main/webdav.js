@@ -429,7 +429,6 @@ const CONFIG_SYNC_FIELDS = [
   ['notes', 'miscProject'],
   ['ui', 'theme'],
   ['ai', 'provider'],
-  ['ai', 'maxInputTokens'],
   ['ai', 'concurrency'],
   ['ai', 'anthropic', 'model'],
   ['ai', 'anthropic', 'temperature'],
