@@ -381,6 +381,8 @@ declare global {
   interface Window {
     weeklog: WeeklogAPI
   }
+  /** 应用版本号，由 vite 编译期从 package.json 注入 */
+  const __APP_VERSION__: string
 }
 
 export {}

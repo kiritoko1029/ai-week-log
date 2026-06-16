@@ -2,6 +2,10 @@ import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+
+// 读取 package.json 版本号作为单一来源，注入为编译期常量 __APP_VERSION__
+const appVersion = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')).version
 
 /**
  * Electron 通过 file:// 加载打包产物。
@@ -35,6 +39,7 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       __DEV__: JSON.stringify(mode === 'development'),
+      __APP_VERSION__: JSON.stringify(appVersion),
     },
     build: {
       outDir: 'dist',

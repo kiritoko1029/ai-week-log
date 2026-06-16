@@ -120,7 +120,7 @@ export function AppShell({ children, isMac }: { children: React.ReactNode; isMac
         <aside className="flex w-[240px] flex-shrink-0 flex-col overflow-y-auto border-r bg-sidebar">
           <div className="border-b px-5 pb-4 pt-5">
             <h1 className="text-xl font-bold tracking-tight">WeekLog</h1>
-            <span className="font-mono text-xs text-muted-foreground">v1.2.1 · 本地运行</span>
+            <span className="font-mono text-xs text-muted-foreground">v{__APP_VERSION__} · 本地运行</span>
           </div>
           <nav className="flex-1 px-3 pb-3 pt-4">
             {sections.map((sec) => (
