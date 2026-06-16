@@ -57,7 +57,7 @@ export function ExistingReportCard({
     <Card>
       <CardHeader className="flex-row items-center justify-between">
         <div className="flex items-center gap-2">
-          <CardTitle className="text-base">已有报告</CardTitle>
+          <CardTitle>已有报告</CardTitle>
           <Badge variant="secondary">{existing.type}</Badge>
           <span className="font-mono text-xs text-muted-foreground">{rangeLabel}</span>
           {existing.edited && <Badge variant="outline">已编辑</Badge>}

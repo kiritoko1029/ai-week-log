@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { Play, Eye, Copy, Download, RefreshCw, Loader2, Pencil, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import { cn, codeSurface } from '@/lib/utils'
 import { useConfig } from '@/hooks/useConfig'
 import { useGenerate } from '@/hooks/useGenerate'
 import { useExistingReport } from '@/hooks/useExistingReport'
@@ -138,7 +139,7 @@ export function GeneratePage() {
       {/* 报告类型 */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="flex flex-wrap items-end gap-6">
             <div className="space-y-2">
               <Label>报告类型</Label>
               <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)}>
@@ -168,7 +169,7 @@ export function GeneratePage() {
       {mode === 'weekly' && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">时间范围</CardTitle>
+            <CardTitle>时间范围</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <ToggleGroup
@@ -207,7 +208,7 @@ export function GeneratePage() {
       {/* 信息源融合 */}
       <Card>
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle className="text-base">信息源融合</CardTitle>
+          <CardTitle>信息源融合</CardTitle>
           <Switch checked={notesEnabled} onCheckedChange={setNotesEnabled} />
         </CardHeader>
         <CardContent className="space-y-4">
@@ -238,7 +239,7 @@ export function GeneratePage() {
       {/* 仓库与过滤 */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">仓库与过滤</CardTitle>
+          <CardTitle>仓库与过滤</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4">
@@ -274,11 +275,11 @@ export function GeneratePage() {
 
       {/* 生成操作 */}
       <div className="flex flex-wrap items-center gap-3">
-        <Button size="lg" onClick={doGenerate} disabled={gen.busy}>
+        <Button onClick={doGenerate} disabled={gen.busy}>
           {gen.busy ? <Loader2 className="animate-spin" /> : <Play />}
           {gen.busy ? '生成中…' : '生成报告'}
         </Button>
-        <Button size="lg" variant="outline" onClick={doDryRun} disabled={gen.busy}>
+        <Button variant="outline" onClick={doDryRun} disabled={gen.busy}>
           <Eye />
           Dry-Run 预览
         </Button>
@@ -314,7 +315,7 @@ export function GeneratePage() {
               onChange={(e) => setEditText(e.target.value)}
               autoFocus
               spellCheck={false}
-              className="min-h-[240px] w-full resize-y rounded-md border bg-zinc-950 p-8 font-mono text-sm leading-[1.85] text-slate-200 shadow-sm outline-none focus:ring-2 focus:ring-ring"
+              className={cn(codeSurface, 'min-h-[240px] w-full resize-y p-8 shadow-sm outline-none focus:ring-2 focus:ring-ring')}
             />
           ) : (
             <ReportPreview text={reportText} />

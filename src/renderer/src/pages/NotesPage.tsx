@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
 import { todayISO, daysAgoISO, fmtDateNoZero } from '@/lib/dates'
+import { cn, codeSurface } from '@/lib/utils'
 import { NoteCard } from '@/components/NoteCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -188,7 +189,7 @@ export function NotesPage() {
               <Label>日期</Label>
               <Input type="date" value={noteDate} onChange={(e) => setNoteDate(e.target.value)} />
             </div>
-            <Button onClick={addNote} className="bg-violet-600 hover:bg-violet-600/90">
+            <Button onClick={addNote} className="bg-violet-600 text-white hover:bg-violet-600/90">
               <Plus />
               添加
             </Button>
@@ -290,7 +291,7 @@ export function NotesPage() {
           <Badge variant="muted" className="font-mono">notes/{rawDate}.md</Badge>
         </CardHeader>
         <CardContent>
-          <pre className="overflow-x-auto rounded-md border bg-zinc-950 p-4 font-mono text-xs leading-relaxed text-slate-200">
+          <pre className={cn(codeSurface, 'overflow-x-auto p-4')}>
             {rawText}
           </pre>
           <p className="mt-3 text-xs text-muted-foreground">
@@ -336,7 +337,7 @@ export function NotesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditorOpen(false)}>取消</Button>
-            <Button onClick={saveEditor} className="bg-violet-600 hover:bg-violet-600/90">保存</Button>
+            <Button onClick={saveEditor} className="bg-violet-600 text-white hover:bg-violet-600/90">保存</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Eye, History as HistoryIcon, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import { cn, codeSurface } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -63,9 +64,9 @@ export function HistoryPage() {
               <TableHead>时间</TableHead>
               <TableHead>类型</TableHead>
               <TableHead>范围</TableHead>
-              <TableHead>仓库</TableHead>
+              <TableHead>单元</TableHead>
               <TableHead>笔记</TableHead>
-              <TableHead>摘要</TableHead>
+              <TableHead>Commit</TableHead>
               <TableHead>状态</TableHead>
               <TableHead></TableHead>
             </TableRow>
@@ -132,7 +133,7 @@ export function HistoryPage() {
             value={editText}
             onChange={(e) => setEditText(e.target.value)}
             spellCheck={false}
-            className="max-h-[50vh] min-h-[200px] w-full resize-y rounded-md border bg-zinc-950 p-4 font-mono text-sm leading-relaxed text-slate-200 outline-none focus:ring-2 focus:ring-ring"
+            className={cn(codeSurface, 'max-h-[50vh] min-h-[200px] w-full resize-y p-4 outline-none focus:ring-2 focus:ring-ring')}
           />
           <DialogFooter>
             <Button

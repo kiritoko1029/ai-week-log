@@ -1,15 +1,16 @@
 import { useState, useRef, useEffect } from 'react'
-import { Activity, Loader2, CheckCircle2, XCircle, X, Trash2 } from 'lucide-react'
+import { Activity, Loader2, CheckCircle2, XCircle, X, Trash2, FileText, Brain, Package, Cloud, Settings2 } from 'lucide-react'
 import { useTasks } from '@/hooks/useTasks'
 import { cn } from '@/lib/utils'
 import type { BackgroundTask } from '@/types/weeklog'
 
-const KIND_ICON: Record<string, string> = {
-  generate: '📝',
-  memory: '🧠',
-  model_dl: '📦',
-  webdav: '☁️',
-  custom: '⚙️',
+/** 任务类型图标：统一使用 lucide SVG（与全应用图标体系一致，不用 emoji） */
+const KIND_ICON: Record<string, React.ReactNode> = {
+  generate: <FileText className="size-3.5" />,
+  memory: <Brain className="size-3.5" />,
+  model_dl: <Package className="size-3.5" />,
+  webdav: <Cloud className="size-3.5" />,
+  custom: <Settings2 className="size-3.5" />,
 }
 
 /** 格式化相对时间 */
@@ -106,7 +107,7 @@ function TaskRow({ task, onRemove }: { task: BackgroundTask; onRemove: (id: stri
   return (
     <div className="border-b px-3 py-2 last:border-b-0 hover:bg-muted/40">
       <div className="flex items-start gap-2">
-        <span className="mt-0.5 shrink-0 text-sm">{KIND_ICON[task.kind] || '⚙️'}</span>
+        <span className="mt-0.5 shrink-0 text-muted-foreground">{KIND_ICON[task.kind] || <Settings2 className="size-3.5" />}</span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-sm font-medium">{task.title}</span>

@@ -88,7 +88,7 @@ export function DashboardPage() {
         />
         <StatCard
           label="预估 Token"
-          value={<span className="text-xl">{stats ? '~' + stats.estTokens.toLocaleString() : '—'}</span>}
+          value={stats ? '~' + stats.estTokens.toLocaleString() : '—'}
           delta="commit + 笔记合计"
         />
       </div>
@@ -124,7 +124,7 @@ export function DashboardPage() {
                 options={projects}
               />
             </div>
-            <Button onClick={addNote} className="bg-violet-600 hover:bg-violet-600/90">
+            <Button onClick={addNote} className="bg-violet-600 text-white hover:bg-violet-600/90">
               <Plus />
               添加笔记
             </Button>
@@ -142,15 +142,15 @@ export function DashboardPage() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
-            <Button size="lg" onClick={() => navigate('generate')}>
+            <Button onClick={() => navigate('generate')}>
               <Sparkles />
               生成本周周报
             </Button>
-            <Button size="lg" variant="outline" onClick={() => navigate('daily')}>
+            <Button variant="outline" onClick={() => navigate('daily')}>
               <CalendarClock />
               生成今日日报
             </Button>
-            <Button size="lg" variant="outline" onClick={() => navigate('generate')}>
+            <Button variant="outline" onClick={() => navigate('generate')}>
               <Eye />
               Dry-Run 预览
             </Button>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw } from 'lucide-react'
+import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2 } from 'lucide-react'
 import { ProviderBadge } from '@/components/BrandIcons'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -285,18 +285,17 @@ export function SettingsPage() {
 
       {/* 界面与快捷键 */}
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>界面与快捷键</CardTitle>
-          <Badge variant="secondary">v1.2</Badge>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-6">
-            <div className="space-y-1.5">
+          <div className="grid grid-cols-1 gap-x-10 gap-y-6 sm:grid-cols-2">
+            <div className="space-y-2">
               <Label>主题外观</Label>
-              <ThemeToggle />
-              <p className="text-xs text-muted-foreground">深色模式更护眼；「跟随系统」随操作系统切换</p>
+              <ThemeToggle className="flex h-9 w-fit p-1" />
+              <p className="text-xs leading-relaxed text-muted-foreground">深色模式更护眼；「跟随系统」随操作系统切换</p>
             </div>
-            <div className="min-w-[240px] space-y-1.5">
+            <div className="space-y-2">
               <Label>快速记笔记快捷键</Label>
               <div className="flex gap-2">
                 <Input
@@ -312,7 +311,7 @@ export function SettingsPage() {
                   默认
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">全局生效（含最小化到托盘时）。需含 Ctrl / Alt / Shift 至少一个修饰键</p>
+              <p className="text-xs leading-relaxed text-muted-foreground">全局生效（含最小化到托盘时）。需含 Ctrl / Alt / Shift 至少一个修饰键</p>
             </div>
           </div>
         </CardContent>
@@ -350,15 +349,15 @@ export function SettingsPage() {
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={checkForUpdates} disabled={checkingUpdate || !updateStatus?.canCheck}>
+            <Button type="button" variant="outline" className="min-w-[8.5rem]" onClick={checkForUpdates} disabled={checkingUpdate || !updateStatus?.canCheck}>
               {checkingUpdate || updateStatus?.phase === 'checking' ? <RefreshCw className="animate-spin" /> : <RefreshCw />}
               检查更新
             </Button>
-            <Button type="button" variant="outline" onClick={downloadUpdate} disabled={downloadingUpdate || !updateStatus?.canDownload}>
+            <Button type="button" variant="outline" className="min-w-[8.5rem]" onClick={downloadUpdate} disabled={downloadingUpdate || !updateStatus?.canDownload}>
               {downloadingUpdate || updateStatus?.phase === 'downloading' ? <Download className="animate-pulse" /> : <Download />}
               下载更新
             </Button>
-            <Button type="button" onClick={installUpdate} disabled={!updateStatus?.canInstall}>
+            <Button type="button" className="min-w-[8.5rem]" onClick={installUpdate} disabled={!updateStatus?.canInstall}>
               <RotateCw />
               {typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '退出并安装' : '重启安装'}
             </Button>
@@ -368,9 +367,8 @@ export function SettingsPage() {
 
       {/* 笔记配置 */}
       <Card className="border-l-4 border-l-violet-500">
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>笔记配置</CardTitle>
-          <Badge variant="secondary" className="bg-violet-500/10 text-violet-600 dark:text-violet-400">v1.1</Badge>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-4">
@@ -507,18 +505,8 @@ export function SettingsPage() {
           <CardTitle>生成参数</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* 常用：输出长度与并发，绝大多数用户只需调这两个 */}
           <div className="flex flex-wrap gap-4">
-            <div className="flex-1 space-y-1.5">
-              <Label>Temperature：{(sub.temperature ?? 0.3).toFixed(1)}</Label>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={tempPct}
-                onChange={(e) => patch((c) => { c.ai[prov].temperature = Number(e.target.value) / 100 })}
-                className="w-full accent-primary"
-              />
-            </div>
             <div className="min-w-[140px] space-y-1.5">
               <Label>最大输出 Token</Label>
               <Input
@@ -526,17 +514,8 @@ export function SettingsPage() {
                 value={sub.maxTokens}
                 onChange={(e) => patch((c) => { c.ai[prov].maxTokens = Number(e.target.value) || 800 })}
               />
+              <p className="text-xs text-muted-foreground">单次生成的输出上限（Anthropic 必填）</p>
             </div>
-            <div className="min-w-[140px] space-y-1.5">
-              <Label>最大输入 Token</Label>
-              <Input
-                type="number"
-                value={draft.ai.maxInputTokens}
-                onChange={(e) => patch((c) => { c.ai.maxInputTokens = Number(e.target.value) || 6000 })}
-              />
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-4">
             <div className="min-w-[120px] space-y-1.5">
               <Label>并发调用数</Label>
               <Input
@@ -546,28 +525,52 @@ export function SettingsPage() {
                 value={draft.ai.concurrency}
                 onChange={(e) => patch((c) => { c.ai.concurrency = Number(e.target.value) || 3 })}
               />
-            </div>
-            <div className="min-w-[120px] space-y-1.5">
-              <Label>重试次数</Label>
-              <Input
-                type="number"
-                min={0}
-                max={5}
-                value={draft.ai.retries}
-                onChange={(e) => patch((c) => { c.ai.retries = Number(e.target.value) || 3 })}
-              />
-            </div>
-            <div className="min-w-[120px] space-y-1.5">
-              <Label>超时（秒）</Label>
-              <Input
-                type="number"
-                min={10}
-                max={300}
-                value={draft.ai.timeoutSeconds}
-                onChange={(e) => patch((c) => { c.ai.timeoutSeconds = Number(e.target.value) || 60 })}
-              />
+              <p className="text-xs text-muted-foreground">同时发起的 LLM 请求数，越大生成越快</p>
             </div>
           </div>
+          {/* 高级：Temperature / 重试 / 超时，通常无需调整，默认收起 */}
+          <details className="group rounded-md border border-border/60">
+            <summary className="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-sm font-medium text-muted-foreground hover:bg-muted/40">
+              <span>高级选项</span>
+              <span className="text-xs">Temperature · 重试 · 超时</span>
+            </summary>
+            <div className="space-y-4 border-t border-border/60 px-4 py-4">
+              <div className="space-y-1.5">
+                <Label>Temperature：{(sub.temperature ?? 0.3).toFixed(1)}</Label>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={tempPct}
+                  onChange={(e) => patch((c) => { c.ai[prov].temperature = Number(e.target.value) / 100 })}
+                  className="w-full accent-primary"
+                />
+                <p className="text-xs text-muted-foreground">越高越随机，越低越确定；周报建议 0.3</p>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <div className="min-w-[120px] space-y-1.5">
+                  <Label>重试次数</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={5}
+                    value={draft.ai.retries}
+                    onChange={(e) => patch((c) => { c.ai.retries = Number(e.target.value) || 3 })}
+                  />
+                </div>
+                <div className="min-w-[120px] space-y-1.5">
+                  <Label>超时（秒）</Label>
+                  <Input
+                    type="number"
+                    min={10}
+                    max={300}
+                    value={draft.ai.timeoutSeconds}
+                    onChange={(e) => patch((c) => { c.ai.timeoutSeconds = Number(e.target.value) || 60 })}
+                  />
+                </div>
+              </div>
+            </div>
+          </details>
         </CardContent>
       </Card>
 
@@ -616,9 +619,8 @@ export function SettingsPage() {
 
       {/* 云同步 WebDAV */}
       <Card className="border-l-4 border-l-sky-500">
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2"><Cloud className="size-4" />云同步（WebDAV）</CardTitle>
-          <Badge variant="secondary" className="bg-sky-500/10 text-sky-600 dark:text-sky-400">v1.2</Badge>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between py-2">
@@ -719,9 +721,8 @@ export function SettingsPage() {
 
       {/* AI 记忆系统 */}
       <Card className="border-l-4 border-l-amber-500">
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2"><Brain className="size-4" />AI 记忆系统</CardTitle>
-          <Badge variant="secondary" className="bg-amber-500/10 text-amber-600 dark:text-amber-400">v1.2</Badge>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between py-2">
@@ -817,8 +818,9 @@ export function SettingsPage() {
                 </DialogHeader>
                 <div className="space-y-2">
                   {memQueue && memQueue.pending > 0 && (
-                    <p className="text-xs text-amber-600 dark:text-amber-400">
-                      ⏳ {memQueue.pending} 条记忆正在后台计算向量…
+                    <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                      <Loader2 className="size-3 animate-spin" />
+                      {memQueue.pending} 条记忆正在后台计算向量…
                     </p>
                   )}
                   {memList.length === 0 ? (
@@ -866,7 +868,7 @@ export function SettingsPage() {
       </Card>
 
       <div className="flex items-center gap-4">
-        <Button size="lg" onClick={handleSave}>
+        <Button onClick={handleSave}>
           <Save />
           保存设置
         </Button>

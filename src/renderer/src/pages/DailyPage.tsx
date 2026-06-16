@@ -81,13 +81,11 @@ export function DailyPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button size="lg" onClick={doGenerate} disabled={gen.busy}>
+            <Button onClick={doGenerate} disabled={gen.busy}>
               {gen.busy ? <Loader2 className="animate-spin" /> : <Play />}
               {gen.busy ? '生成中…' : '生成日报'}
             </Button>
             <Button
-              size="lg"
-              variant="secondary"
               className="bg-violet-600 text-white hover:bg-violet-600/90"
               onClick={() => navigate('notes')}
             >
