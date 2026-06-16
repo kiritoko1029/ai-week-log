@@ -1,5 +1,8 @@
 # WeekLog — Git Weekly/Daily Report Desktop Client
 
+[![GitHub release](https://img.shields.io/github/v/release/kiritoko1029/ai-week-log?label=release)](https://github.com/kiritoko1029/ai-week-log/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 English | [简体中文](./README.md)
 
 Reads commit logs from local Git repositories, combines them with **manual notes** (meetings, communication, design, research, and other non-code work), and uses AI to fuse and summarize everything into structured *weekly* / *daily work reports*.
@@ -10,8 +13,6 @@ Reads commit logs from local Git repositories, combines them with **manual notes
 - **WebDAV cloud sync**: notes / config / history synced across devices, with dedup + conflict alerts.
 - **Cross-platform desktop app**: macOS (Apple Silicon / arm64) + Windows (x64).
 - **Local-first**: network requests only happen when calling the LLM; notes, config, and memory all stay local.
-
-> Design docs: [PRD.md](./PRD.md) · [PLAN.md](./PLAN.md) ｜ UI prototype: `weeklog-desktop-app.html`
 
 ---
 
@@ -79,8 +80,6 @@ ai-week-log/
 │           ├── hooks/          # useConfig / useGenerate / useTasks / useNav ...
 │           └── styles/         # Tailwind + CSS variables (light / dark themes)
 ├── build/                      # app icons (icns / ico / png) + NSIS installer script
-├── PRD.md / PLAN.md
-└── weeklog-desktop-app.html    # UI design prototype
 ```
 
 ---

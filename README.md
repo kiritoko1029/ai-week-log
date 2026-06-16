@@ -1,5 +1,8 @@
 # WeekLog — Git 周报/日报生成桌面客户端
 
+[![GitHub release](https://img.shields.io/github/v/release/kiritoko1029/ai-week-log?label=release)](https://github.com/kiritoko1029/ai-week-log/releases)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 [English](./README.en.md) | 简体中文
 
 读取本地 Git 仓库的 commit 提交日志，结合**人工笔记**（会议、沟通、设计、调研等非代码工作），通过 AI 自动融合总结，生成结构化《工作周报》/《日报》。
@@ -10,8 +13,6 @@
 - **WebDAV 云同步**：笔记 / 配置 / 历史记录多端同步，自动去重 + 冲突告警。
 - **跨平台桌面应用**：macOS（Apple Silicon / arm64）+ Windows（x64）。
 - **本地优先**：仅在调用 LLM 时产生网络请求；笔记、配置、记忆均存本地。
-
-> 设计文档：[PRD.md](./PRD.md) · [PLAN.md](./PLAN.md) ｜ UI 原型：`weeklog-desktop-app.html`
 
 ---
 
