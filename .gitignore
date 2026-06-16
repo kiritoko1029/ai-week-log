@@ -12,6 +12,8 @@ Thumbs.db
 .agents/
 .od-skills/
 *.artifact.json
+# 根目录原型/设计产物（由 AI 工具生成，非应用源码；真正的入口 HTML 在 src/renderer/）
+weeklog-desktop-app.html
 ee_app.log
 ee.log
 eo.log
