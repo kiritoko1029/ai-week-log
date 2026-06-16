@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity } from 'lucide-react'
 import { ProviderBadge } from '@/components/BrandIcons'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import type { Config, MemoryIndexItem, WebdavStatus, MemoryQueueStatus, UpdateStatus } from '@/types/weeklog'
+import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus } from '@/types/weeklog'
 
 export function SettingsPage() {
   const { config, save } = useConfig()
@@ -42,6 +42,7 @@ export function SettingsPage() {
   // AI 记忆状态
   const [memList, setMemList] = useState<MemoryIndexItem[]>([])
   const [memQueue, setMemQueue] = useState<MemoryQueueStatus | null>(null)
+  const [memStatus, setMemStatus] = useState<MemoryStatus | null>(null)
   const [rebuildingMem, setRebuildingMem] = useState(false)
   const [memDialogOpen, setMemDialogOpen] = useState(false)
 
@@ -80,6 +81,14 @@ export function SettingsPage() {
       api.memory.queueStatus().then(setMemQueue)
     }
   }, [memDialogOpen])
+
+  // 加载记忆系统状态（模型/向量化摘要）
+  const refreshMemStatus = useCallback(() => {
+    api.memory.status().then(setMemStatus).catch(() => {})
+  }, [])
+  useEffect(() => {
+    refreshMemStatus()
+  }, [refreshMemStatus])
 
   useEffect(() => {
     api.updates.status().then(setUpdateStatus).catch(() => {})
@@ -216,6 +225,7 @@ export function SettingsPage() {
         toast.success(`记忆重建完成：生成 ${r.generated} 条，失败 ${r.failed} 条`)
         api.memory.list().then(setMemList)
         api.memory.queueStatus().then(setMemQueue)
+        refreshMemStatus()
       }
     } catch (e: any) {
       toast.error('重建失败：' + (e?.message || '未知错误'))
@@ -725,6 +735,82 @@ export function SettingsPage() {
           <CardTitle className="flex items-center gap-2"><Brain className="size-4" />AI 记忆系统</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* 模型与向量化状态摘要 */}
+          <div className="rounded-md border bg-muted/30 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">运行状态</span>
+              <Button variant="ghost" size="sm" type="button" onClick={refreshMemStatus} className="h-6 px-2 text-xs">
+                <RefreshCw className="size-3" />
+                刷新
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {/* 模型状态 */}
+              <div className="flex items-start gap-2">
+                {memStatus ? (
+                  memStatus.source === 'local' ? (
+                    memStatus.modelReady ? (
+                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+                    ) : (
+                      <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+                    )
+                  ) : (
+                    <Cpu className="mt-0.5 size-4 shrink-0 text-sky-500" />
+                  )
+                ) : (
+                  <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
+                )}
+                <div className="min-w-0 space-y-0.5">
+                  <p className="text-xs font-medium text-foreground">
+                    {memStatus ? (memStatus.source === 'local' ? '本地模型' : 'API 模型') : '模型状态'}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {memStatus ? (
+                      memStatus.source === 'local' ? (
+                        memStatus.modelReady
+                          ? `✓ 已就绪 · ${memStatus.modelSizeMB}MB`
+                          : '⚠ 未下载（首次生成报告后自动下载）'
+                      ) : (
+                        `OpenAI Embedding · ${memStatus.model.replace('Xenova/', '')}`
+                      )
+                    ) : '读取中…'}
+                  </p>
+                  {memStatus && (
+                    <p className="truncate text-[11px] text-muted-foreground/70" title={memStatus.model}>
+                      {memStatus.model}
+                    </p>
+                  )}
+                </div>
+              </div>
+              {/* 向量化进度 */}
+              <div className="flex items-start gap-2">
+                <Activity className="mt-0.5 size-4 shrink-0 text-violet-500" />
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <p className="text-xs font-medium text-foreground">向量化进度</p>
+                  {memStatus ? (
+                    memStatus.total > 0 ? (
+                      <>
+                        <p className="text-xs text-muted-foreground">
+                          {memStatus.embedded}/{memStatus.total} 条已完成
+                          {memStatus.dim > 0 && ` · ${memStatus.dim} 维`}
+                        </p>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full bg-violet-500 transition-all"
+                            style={{ width: `${Math.round((memStatus.embedded / memStatus.total) * 100)}%` }}
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">暂无记忆，生成报告后自动积累</p>
+                    )
+                  ) : (
+                    <p className="text-xs text-muted-foreground">读取中…</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
           <div className="flex items-center justify-between py-2">
             <div>
               <h4 className="text-sm font-semibold">启用 AI 记忆</h4>

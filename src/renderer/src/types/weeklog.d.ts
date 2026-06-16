@@ -228,6 +228,26 @@ export interface MemoryQueueStatus {
   running: boolean
 }
 
+/** 记忆系统整体状态（模型 + 向量化进度聚合） */
+export interface MemoryStatus {
+  /** embedding 来源：local | api */
+  source: 'local' | 'api'
+  /** 模型名（如 Xenova/multilingual-e5-small） */
+  model: string
+  /** 模型下载源 */
+  modelSource: 'auto' | 'huggingface' | 'modelscope'
+  /** 本地模型文件是否已就绪（source=api 时恒为 false，无意义） */
+  modelReady: boolean
+  /** 模型占用空间（MB，就绪时 >0） */
+  modelSizeMB: number
+  /** 记忆总条数 */
+  total: number
+  /** 已向量化条数 */
+  embedded: number
+  /** 向量维度（0 表示尚无任何向量产出） */
+  dim: number
+}
+
 /** 问答上下文引用来源 */
 export interface ChatRef {
   kind: 'memory' | 'report' | 'note'
@@ -412,6 +432,7 @@ export interface WeeklogAPI {
     list: () => Promise<MemoryIndexItem[]>
     search: (query: string, topK?: number) => Promise<MemorySearchHit[]>
     queueStatus: () => Promise<MemoryQueueStatus>
+    status: () => Promise<MemoryStatus>
     rebuild: () => Promise<{ generated: number; failed: number; error?: string }>
     remove: (id: string) => Promise<{ ok: boolean }>
     inferProject: (noteText: string) => Promise<MemoryInferResult>

@@ -334,6 +334,91 @@ function cosine(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb))
 }
 
+// ── 模型/向量化状态探测（供设置页展示）──
+
+/**
+ * 检测本地 embedding 模型文件是否已落盘可用。
+ * 以 onnx/model.onnx（或 model_quantized.onnx）+ config.json + tokenizer.json 同时存在为判定。
+ * @returns {{ ready: boolean, cacheDir: string|null, modelDir: string|null, sizeMB: number, onnxFile: string|null }}
+ */
+function probeLocalModel(modelName, userDataDir) {
+  const cacheDir = resolveModelCacheDir(userDataDir)
+  const modelDir = path.join(cacheDir, modelName)
+  const result = { ready: false, cacheDir, modelDir, sizeMB: 0, onnxFile: null }
+  try {
+    const files = fs.readdirSync(modelDir)
+    const onnxDir = files.includes('onnx') ? path.join(modelDir, 'onnx') : modelDir
+    const onnxCandidates = ['model.onnx', 'model_quantized.onnx']
+    let onnxFile = null
+    try {
+      const onnxFiles = fs.readdirSync(onnxDir)
+      onnxFile = onnxCandidates.find((f) => onnxFiles.includes(f))
+    } catch {}
+    const hasConfig = files.includes('config.json')
+    const hasTokenizer = files.includes('tokenizer.json')
+    if (onnxFile && hasConfig && hasTokenizer) {
+      result.ready = true
+      result.onnxFile = onnxFile
+      // 统计整个模型目录大小
+      let bytes = 0
+      const walk = (d) => {
+        for (const name of fs.readdirSync(d)) {
+          const p = path.join(d, name)
+          const st = fs.statSync(p)
+          if (st.isDirectory()) walk(p)
+          else bytes += st.size
+        }
+      }
+      try { walk(modelDir) } catch {}
+      result.sizeMB = Math.round((bytes / 1024 / 1024) * 10) / 10
+    }
+  } catch {}
+  return result
+}
+
+/**
+ * 聚合记忆系统的整体状态，供设置页一次性展示。
+ * @param {string} dir userData 目录
+ * @param {object} cfg 完整配置
+ * @returns {{ source:string, model:string, modelSource:string, modelReady:boolean, modelSizeMB:number,
+ *            total:number, embedded:number, dim:number, dimModel:string }}
+ */
+function getStatus(dir, cfg) {
+  const memCfg = (cfg && cfg.memory) || {}
+  const source = memCfg.embeddingSource || 'local'
+  const model = memCfg.embeddingModel || 'Xenova/multilingual-e5-small'
+  const modelSource = memCfg.modelSource || 'auto'
+
+  const list = readIndex(dir)
+  const total = list.length
+  const embedded = list.filter((x) => x.embeddingReady && x.embedding && x.embedding.length).length
+
+  // 向量维度：取第一条非空 embedding 的长度
+  let dim = 0
+  const withVec = list.find((x) => x.embedding && x.embedding.length)
+  if (withVec) dim = withVec.embedding.length
+
+  // 模型状态：仅 local 时才有意义探测文件
+  let modelReady = false
+  let modelSizeMB = 0
+  if (source === 'local') {
+    const probe = probeLocalModel(model, dir)
+    modelReady = probe.ready
+    modelSizeMB = probe.sizeMB
+  }
+
+  return {
+    source,       // 'local' | 'api'
+    model,        // 模型名
+    modelSource,  // 下载源
+    modelReady,   // 本地模型文件是否就绪
+    modelSizeMB,  // 模型占用 MB（就绪时 >0）
+    total,        // 记忆总条数
+    embedded,     // 已向量化条数
+    dim,          // 向量维度（0 表示尚无任何向量）
+  }
+}
+
 // ── Embedding 异步队列 ──
 
 let _queue = []          // 待处理 entry id 队列
@@ -737,6 +822,8 @@ module.exports = {
   rebuild,
   enqueueEmbedding,
   queueStatus,
+  getStatus,
+  probeLocalModel,
   tokenize,
   cosine,
   setModelProgressCallback,

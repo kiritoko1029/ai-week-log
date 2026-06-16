@@ -364,6 +364,10 @@ function registerIpc({ app, getMainWindow, updater }) {
     return memory.search(userDataDir, query, { topK, cfg })
   })
   ipcMain.handle('memory:queueStatus', () => memory.queueStatus())
+  ipcMain.handle('memory:status', () => {
+    const cfg = getConfig()
+    return memory.getStatus(userDataDir, cfg)
+  })
   ipcMain.handle('memory:rebuild', async () => {
     const cfg = getConfig()
     const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))

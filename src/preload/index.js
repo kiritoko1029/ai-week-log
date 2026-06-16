@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('weeklog', {
     list: () => ipcRenderer.invoke('memory:list'),
     search: (query, topK) => ipcRenderer.invoke('memory:search', { query, topK }),
     queueStatus: () => ipcRenderer.invoke('memory:queueStatus'),
+    status: () => ipcRenderer.invoke('memory:status'),
     rebuild: () => ipcRenderer.invoke('memory:rebuild'),
     remove: (id) => ipcRenderer.invoke('memory:delete', { id }),
     inferProject: (noteText) => ipcRenderer.invoke('memory:inferProject', { noteText }),
