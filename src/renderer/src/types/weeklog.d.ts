@@ -54,6 +54,7 @@ export interface Config {
     timeoutSeconds: number
     anthropic: AiSubConfig
     openai: AiSubConfig
+    chat: { maxTokens: number; topK: number; historyTurns: number; thinking: boolean }
   }
   output: {
     format: 'text' | 'md' | 'json'
@@ -227,6 +228,73 @@ export interface MemoryQueueStatus {
   running: boolean
 }
 
+/** 问答上下文引用来源 */
+export interface ChatRef {
+  kind: 'memory' | 'report' | 'note'
+  label: string
+  date?: string
+  project?: string
+  snippet: string
+}
+
+export interface ChatUsage {
+  inputTokens: number
+  outputTokens: number
+  model: string
+}
+
+/** 一份对话内生成的报告（用于渲染报告卡片） */
+export interface ChatReport {
+  reportType: 'daily' | 'weekly'
+  rangeStart: string
+  rangeEnd: string
+  historyId: string
+  meta?: ReportMeta
+}
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+  /** 模型思考过程（Anthropic thinking / OpenAI reasoning summary），可折叠展示 */
+  reasoning?: string
+  refs?: ChatRef[]
+  usage?: ChatUsage
+  /** 非空表示该 assistant 消息是一份生成的报告 */
+  report?: ChatReport
+}
+
+/** 完整会话（含 messages） */
+export interface ChatSession {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  messages: ChatMessage[]
+}
+
+/** 会话列表项（轻量元数据） */
+export interface ChatSessionMeta {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  messageCount: number
+}
+
+/** chat:stream 推送的事件载荷 */
+export type ChatStreamPayload = { sessionId: string; msgId: string } & (
+  | { type: 'refs'; refs: ChatRef[] }
+  | { type: 'thinking'; text: string }
+  | { type: 'delta'; text: string }
+  | { type: 'done'; message: ChatMessage; usage: ChatUsage }
+  | { type: 'report_progress'; stage?: string; done?: number; total?: number; project?: string }
+  | { type: 'report_done'; message: ChatMessage }
+  | { type: 'aborted' }
+  | { type: 'error'; message: string }
+)
+
 export type TaskKind = 'generate' | 'memory' | 'model_dl' | 'webdav' | 'custom'
 export type TaskStatus = 'running' | 'done' | 'error' | 'cancelled'
 
@@ -347,6 +415,22 @@ export interface WeeklogAPI {
     rebuild: () => Promise<{ generated: number; failed: number; error?: string }>
     remove: (id: string) => Promise<{ ok: boolean }>
     inferProject: (noteText: string) => Promise<MemoryInferResult>
+  }
+  chat: {
+    sessions: () => Promise<ChatSessionMeta[]>
+    getSession: (id: string) => Promise<ChatSession | null>
+    createSession: (title?: string) => Promise<ChatSession>
+    renameSession: (id: string, title: string) => Promise<{ ok: boolean; title?: string }>
+    deleteSession: (id: string) => Promise<{ ok: boolean }>
+    /** 发起流式问答，立即返回 { msgId }，正文经 onStream 推送 */
+    send: (sessionId: string, content: string) => Promise<{ msgId?: string; error?: string }>
+    generate: (
+      sessionId: string,
+      reportType: 'daily' | 'weekly',
+      when: string
+    ) => Promise<{ msgId?: string; error?: string }>
+    cancel: (msgId: string) => Promise<{ ok: boolean }>
+    onStream: (cb: (payload: ChatStreamPayload) => void) => () => void
   }
   tasks: {
     list: () => Promise<BackgroundTask[]>

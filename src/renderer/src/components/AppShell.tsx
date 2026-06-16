@@ -7,6 +7,7 @@ import {
   History,
   Settings,
   LineChart,
+  MessageSquare,
 } from 'lucide-react'
 import { useNav, type PageId } from '@/hooks/useNav'
 import { useConfig } from '@/hooks/useConfig'
@@ -64,6 +65,16 @@ export function AppShell({ children, isMac }: { children: React.ReactNode; isMac
           id: 'daily',
           label: '今日日报',
           icon: <CalendarClock className="h-[18px] w-[18px]" />,
+        },
+      ],
+    },
+    {
+      title: '助手',
+      items: [
+        {
+          id: 'chat',
+          label: 'AI 问答',
+          icon: <MessageSquare className="h-[18px] w-[18px]" />,
         },
       ],
     },

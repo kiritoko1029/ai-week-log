@@ -48,6 +48,12 @@ function defaultConfig() {
         temperature: 0.3,
         maxTokens: 800,
       },
+      chat: {
+        maxTokens: 2048, // 问答回答上限（比周报 800 更长）
+        topK: 6, // RAG 注入的相关记录条数
+        historyTurns: 12, // 携带的最近对话轮数（控 token）
+        thinking: true, // 输出模型思考过程（Anthropic extended thinking / OpenAI reasoning，仅支持的模型生效）
+      },
     },
     output: {
       format: 'text', // text | md | json

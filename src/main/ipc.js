@@ -19,8 +19,10 @@ const { testProvider } = require('./llm')
 const notes = require('./notes')
 const secrets = require('./secrets')
 const { collect, generate } = require('./pipeline')
+const { isoDate } = require('./utils')
 const webdav = require('./webdav')
 const memory = require('./memory')
+const chat = require('./chat')
 const tasks = require('./tasks')
 
 const HISTORY_FILE = 'history.json'
@@ -43,6 +45,22 @@ function readHistory(dir) {
 function writeHistory(dir, list) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, HISTORY_FILE), JSON.stringify(list, null, 2), 'utf8')
+}
+
+/** 保存一份报告到历史：按 (type, rangeStart) 去重覆盖、保留最近 200 条，返回保存后的条目（含 id）。 */
+function saveHistoryEntry(dir, entry) {
+  const list = readHistory(dir)
+  const existIdx = list.findIndex((h) => h.type === entry.type && h.rangeStart === entry.rangeStart)
+  let saved
+  if (existIdx >= 0) {
+    saved = { ...list[existIdx], ...entry, createdAt: new Date().toISOString(), edited: false }
+    list[existIdx] = saved
+  } else {
+    saved = { id: newId(), createdAt: new Date().toISOString(), ...entry }
+    list.unshift(saved)
+  }
+  writeHistory(dir, list.slice(0, 200))
+  return saved
 }
 
 function normalizeSecretProvider(provider, fallback) {
@@ -270,22 +288,7 @@ function registerIpc({ app, getMainWindow, updater }) {
 
   // ── 历史 ──
   ipcMain.handle('history:list', () => readHistory(userDataDir))
-  ipcMain.handle('history:save', (_e, entry) => {
-    const list = readHistory(userDataDir)
-    // 同日/同周去重：以 (type, rangeStart) 为键，命中已有记录则原地覆盖，不追加副本
-    const existIdx = list.findIndex((h) => h.type === entry.type && h.rangeStart === entry.rangeStart)
-    let saved
-    if (existIdx >= 0) {
-      // 保留原 id（稳定标识），刷新正文/元数据/时间戳，重置人工编辑标记
-      saved = { ...list[existIdx], ...entry, createdAt: new Date().toISOString(), edited: false }
-      list[existIdx] = saved
-    } else {
-      saved = { id: newId(), createdAt: new Date().toISOString(), ...entry }
-      list.unshift(saved)
-    }
-    writeHistory(userDataDir, list.slice(0, 200))
-    return saved
-  })
+  ipcMain.handle('history:save', (_e, entry) => saveHistoryEntry(userDataDir, entry))
   ipcMain.handle('history:update', (_e, { id, text } = {}) => {
     if (!id || typeof text !== 'string') return { ok: false }
     const list = readHistory(userDataDir)
@@ -390,6 +393,127 @@ function registerIpc({ app, getMainWindow, updater }) {
     const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
     if (!has) return { error: '未配置 AI API Key' }
     return memory.inferProject(userDataDir, noteText, { cfg, apiKey: key })
+  })
+
+  // ── AI 对话问答 ──
+  const activeStreams = new Map() // msgId → AbortController（支持中途取消）
+
+  // 报告生成编排：走真实 generate 流水线 → 存档历史 → 入会话 → 经 chat:stream 推进度/结果
+  const runChatReport = async ({ sessionId, reportType, rangeOpts, cfg, key, send }) => {
+    const cnLabel = reportType === 'weekly' ? '周报' : '日报'
+    send({ type: 'report_progress', stage: '采集中' })
+    const options = {
+      format: cfg.output.format,
+      weekStart: cfg.weekStart,
+      merge: cfg.filters.mergeCommits,
+      _reportType: cnLabel,
+      userDataDir,
+    }
+    const report = await generate({
+      cfg,
+      apiKey: key,
+      rangeOpts: rangeOpts || {},
+      notesDir: getNotesDir(),
+      options,
+      onProgress: (m) => send({ type: 'report_progress', done: m.done, total: m.total, project: m.project }),
+    })
+    if (!report || report.error) {
+      send({ type: 'error', message: (report && report.error) || '生成失败' })
+      return
+    }
+    const rangeStart = isoDate(report.rangeStart)
+    const rangeEnd = isoDate(report.rangeEnd)
+    const saved = saveHistoryEntry(userDataDir, {
+      type: cnLabel,
+      rangeStart,
+      rangeEnd,
+      text: report.text,
+      meta: report.meta || {},
+    })
+    const msg = chat.appendMessage(userDataDir, sessionId, {
+      role: 'assistant',
+      content: report.text,
+      report: { reportType, rangeStart, rangeEnd, historyId: saved.id, meta: report.meta || {} },
+    })
+    send({ type: 'report_done', message: msg })
+  }
+
+  ipcMain.handle('chat:sessions', () => chat.listSessions(userDataDir))
+  ipcMain.handle('chat:session:get', (_e, { id } = {}) => chat.getSession(userDataDir, id))
+  ipcMain.handle('chat:session:create', (_e, { title } = {}) => chat.createSession(userDataDir, title))
+  ipcMain.handle('chat:session:rename', (_e, { id, title } = {}) => chat.renameSession(userDataDir, id, title))
+  ipcMain.handle('chat:session:delete', (_e, { id } = {}) => chat.deleteSession(userDataDir, id))
+  ipcMain.handle('chat:cancel', (_e, { msgId } = {}) => {
+    const ctrl = activeStreams.get(msgId)
+    if (ctrl) {
+      ctrl.abort()
+      return { ok: true }
+    }
+    return { ok: false }
+  })
+  ipcMain.handle('chat:send', (_e, { sessionId, content } = {}) => {
+    if (!sessionId || !content || !content.trim()) return { error: '缺少会话或内容' }
+    const cfg = getConfig()
+    const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
+    if (!has) return { error: `未设置 ${cfg.ai.provider} 的 API Key，请先在设置中填写` }
+    const msgId = 'msg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const ctrl = new AbortController()
+    activeStreams.set(msgId, ctrl)
+    const send = (payload) => {
+      const win = getMainWindow()
+      if (win && !win.isDestroyed()) win.webContents.send('chat:stream', { sessionId, msgId, ...payload })
+    }
+    // 不 await：立即回执 msgId，后台异步处理（意图识别 → 报告生成 或 问答）
+    ;(async () => {
+      // 报告意图：规则预筛 → LLM 细判 → 命中则走真实生成流水线
+      if (chat.looksLikeReportRequest(content)) {
+        send({ type: 'report_progress', stage: '理解中' })
+        const intent = await chat.detectReportIntent({ cfg, apiKey: key, text: content, now: new Date() })
+        if (intent && intent.action === 'generate' && intent.reportType) {
+          chat.appendMessage(userDataDir, sessionId, { role: 'user', content })
+          await runChatReport({ sessionId, reportType: intent.reportType, rangeOpts: intent.rangeOpts, cfg, key, send })
+          return
+        }
+      }
+      // 普通问答（askStream 内部会落 user 消息）
+      await chat.askStream({
+        dir: userDataDir,
+        cfg,
+        apiKey: key,
+        sessionId,
+        content,
+        history: readHistory(userDataDir),
+        notesDir: getNotesDir(),
+        searchMemory: (q, k) => memory.search(userDataDir, q, { topK: k, cfg }),
+        onEvent: send,
+        signal: ctrl.signal,
+      })
+    })()
+      .catch((e) => send({ type: 'error', message: (e && e.message) || '生成失败' }))
+      .finally(() => activeStreams.delete(msgId))
+    return { msgId }
+  })
+
+  ipcMain.handle('chat:generate', (_e, { sessionId, reportType, when } = {}) => {
+    if (!sessionId || !reportType) return { error: '缺少会话或报告类型' }
+    const cfg = getConfig()
+    const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
+    if (!has) return { error: `未设置 ${cfg.ai.provider} 的 API Key，请先在设置中填写` }
+    const msgId = 'msg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const ctrl = new AbortController()
+    activeStreams.set(msgId, ctrl)
+    const send = (payload) => {
+      const win = getMainWindow()
+      if (win && !win.isDestroyed()) win.webContents.send('chat:stream', { sessionId, msgId, ...payload })
+    }
+    const cnLabel = reportType === 'weekly' ? '周报' : '日报'
+    const whenLabel =
+      when === 'yesterday' ? '昨天' : when === 'last_week' ? '上周' : when === 'this_week' ? '本周' : '今天'
+    chat.appendMessage(userDataDir, sessionId, { role: 'user', content: `生成${whenLabel}${cnLabel}` })
+    runChatReport({ sessionId, reportType, rangeOpts: chat.whenToRangeOpts(reportType, when), cfg, key, send })
+      .catch((e) => send({ type: 'error', message: (e && e.message) || '生成失败' }))
+      .finally(() => activeStreams.delete(msgId))
+    return { msgId }
   })
 
   // ── 后台任务管理 ──

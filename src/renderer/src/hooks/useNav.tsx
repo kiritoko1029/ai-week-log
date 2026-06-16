@@ -4,6 +4,7 @@ export type PageId =
   | 'dashboard'
   | 'generate'
   | 'daily'
+  | 'chat'
   | 'notes'
   | 'repos'
   | 'history'

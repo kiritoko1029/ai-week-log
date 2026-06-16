@@ -12,6 +12,7 @@ class LLMRateLimited extends LLMError {} // 429，可重试
 class LLMServerError extends LLMError {} // 5xx / 网络错误，可重试
 class LLMAuthError extends LLMError {} // 401/403，不可重试
 class LLMBadRequest extends LLMError {} // 400，不可重试
+class LLMAborted extends LLMError {} // 用户主动取消（AbortController），上层应静默处理
 
 function snippet(text, n = 200) {
   const s = String(text || '')
@@ -20,6 +21,19 @@ function snippet(text, n = 200) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
+}
+
+/**
+ * 把 HTTP 状态码映射为统一异常实例（OpenAI / Anthropic / 流式共用）。
+ * 429 / 5xx 可重试，其余不可重试。
+ */
+function errorForStatus(status, text) {
+  const msg = snippet(text)
+  if (status === 401 || status === 403) return new LLMAuthError(`鉴权失败 ${status}：${msg}`)
+  if (status === 400) return new LLMBadRequest(`请求错误 400：${msg}`)
+  if (status === 429) return new LLMRateLimited(`429 限流：${msg}`)
+  if (status >= 500) return new LLMServerError(`${status} 服务端错误：${msg}`)
+  return new LLMError(`未预期状态码 ${status}：${msg}`)
 }
 
 /**
@@ -47,18 +61,12 @@ async function requestWithRetry(url, headers, body, { timeout = 60, retries = 3 
         data = { _raw: text }
       }
       if (resp.ok) return data
-      if (resp.status === 401 || resp.status === 403) {
-        throw new LLMAuthError(`鉴权失败 ${resp.status}：${snippet(text)}`)
-      }
-      if (resp.status === 400) {
-        throw new LLMBadRequest(`请求错误 400：${snippet(text)}`)
-      }
-      if (resp.status === 429) {
-        lastErr = new LLMRateLimited(`429 限流：${snippet(text)}`)
-      } else if (resp.status >= 500) {
-        lastErr = new LLMServerError(`${resp.status} 服务端错误：${snippet(text)}`)
+      const err = errorForStatus(resp.status, text)
+      // 429 / 5xx 可重试，记录后进入退避；其余（401/403/400/未预期）立即失败
+      if (err instanceof LLMRateLimited || err instanceof LLMServerError) {
+        lastErr = err
       } else {
-        throw new LLMError(`未预期状态码 ${resp.status}：${snippet(text)}`)
+        throw err
       }
     } catch (e) {
       clearTimeout(timer)
@@ -82,7 +90,9 @@ module.exports = {
   LLMServerError,
   LLMAuthError,
   LLMBadRequest,
+  LLMAborted,
   snippet,
   sleep,
+  errorForStatus,
   requestWithRetry,
 }

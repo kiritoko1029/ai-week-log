@@ -4,6 +4,7 @@ import { Statusbar } from '@/components/Statusbar'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { GeneratePage } from '@/pages/GeneratePage'
 import { DailyPage } from '@/pages/DailyPage'
+import { ChatPage } from '@/pages/ChatPage'
 import { NotesPage } from '@/pages/NotesPage'
 import { ReposPage } from '@/pages/ReposPage'
 import { HistoryPage } from '@/pages/HistoryPage'
@@ -25,6 +26,7 @@ export function App() {
         {page === 'dashboard' && <DashboardPage />}
         {page === 'generate' && <GeneratePage />}
         {page === 'daily' && <DailyPage />}
+        {page === 'chat' && <ChatPage />}
         {page === 'notes' && <NotesPage />}
         {page === 'repos' && <ReposPage />}
         {page === 'history' && <HistoryPage />}

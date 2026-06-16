@@ -72,6 +72,24 @@ contextBridge.exposeInMainWorld('weeklog', {
     remove: (id) => ipcRenderer.invoke('memory:delete', { id }),
     inferProject: (noteText) => ipcRenderer.invoke('memory:inferProject', { noteText }),
   },
+  chat: {
+    sessions: () => ipcRenderer.invoke('chat:sessions'),
+    getSession: (id) => ipcRenderer.invoke('chat:session:get', { id }),
+    createSession: (title) => ipcRenderer.invoke('chat:session:create', { title }),
+    renameSession: (id, title) => ipcRenderer.invoke('chat:session:rename', { id, title }),
+    deleteSession: (id) => ipcRenderer.invoke('chat:session:delete', { id }),
+    /** 发起流式问答，立即返回 { msgId }，正文经 onStream 推送 */
+    send: (sessionId, content) => ipcRenderer.invoke('chat:send', { sessionId, content }),
+    /** 快捷生成日报/周报，立即返回 { msgId }，进度与结果经 onStream 推送 */
+    generate: (sessionId, reportType, when) =>
+      ipcRenderer.invoke('chat:generate', { sessionId, reportType, when }),
+    cancel: (msgId) => ipcRenderer.invoke('chat:cancel', { msgId }),
+    onStream: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('chat:stream', handler)
+      return () => ipcRenderer.removeListener('chat:stream', handler)
+    },
+  },
   tasks: {
     list: () => ipcRenderer.invoke('tasks:list'),
     hasRunning: () => ipcRenderer.invoke('tasks:hasRunning'),
