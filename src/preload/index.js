@@ -98,6 +98,10 @@ contextBridge.exposeInMainWorld('weeklog', {
     /** 同步原生外观（标题栏/窗口底色），返回当前是否深色 */
     setTheme: (theme) => ipcRenderer.invoke('ui:setTheme', theme),
   },
+  shell: {
+    /** 在系统默认浏览器打开外链（仅 http/https） */
+    openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  },
   shortcut: {
     /** 读取已保存配置并重新注册全局快捷键，返回 { ok, accel } */
     apply: () => ipcRenderer.invoke('shortcut:apply'),

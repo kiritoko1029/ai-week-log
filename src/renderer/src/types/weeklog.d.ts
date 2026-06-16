@@ -366,6 +366,10 @@ export interface WeeklogAPI {
   ui: {
     setTheme: (theme: 'auto' | 'light' | 'dark') => Promise<boolean>
   }
+  shell: {
+    /** 在系统默认浏览器打开外链（仅 http/https） */
+    openExternal: (url: string) => Promise<void>
+  }
   shortcut: {
     apply: () => Promise<{ ok: boolean; accel: string }>
     suspend: () => Promise<boolean>

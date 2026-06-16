@@ -3,7 +3,7 @@
 /**
  * IPC 处理器：把主进程能力（配置/仓库/笔记/采集/生成/历史/对话框）暴露给渲染进程。
  */
-const { ipcMain, dialog } = require('electron')
+const { ipcMain, dialog, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const {
@@ -308,6 +308,14 @@ function registerIpc({ app, getMainWindow, updater }) {
     const win = getMainWindow()
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
     return r.canceled ? null : r.filePaths[0]
+  })
+  // 在系统默认浏览器打开外链（仅放行 http/https，防 XSS）
+  ipcMain.handle('shell:openExternal', (_e, url) => {
+    if (typeof url !== 'string') return
+    try {
+      const u = new URL(url)
+      if (u.protocol === 'http:' || u.protocol === 'https:') shell.openExternal(u.href)
+    } catch {}
   })
 
   // ── WebDAV 同步 ──
