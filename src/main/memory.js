@@ -89,34 +89,23 @@ function setModelProgressCallback(fn) {
 }
 
 /**
- * 决定模型缓存目录。优先顺序：
- * 1) 安装目录下的 resources/models （随软件走，卸载即清，便携）
- * 2) 回退 userData/models （安装目录不可写时，如 Program Files）
+ * 决定模型缓存目录。
+ * 模型体积较大，必须放在 userData/models，避免 macOS DMG 重装替换 .app 时丢失缓存。
  * 结果缓存，避免反复探写。
  */
 function resolveModelCacheDir(userDataDir) {
   if (_resolvedCacheDir) return _resolvedCacheDir
   const fs2 = require('fs')
-  const candidates = []
+  const cacheDir = path.join(userDataDir, 'models')
   try {
-    if (process.resourcesPath) {
-      candidates.push(path.join(process.resourcesPath, 'models'))
-    }
-  } catch {}
-  candidates.push(path.join(userDataDir, 'models'))
-  for (const c of candidates) {
-    try {
-      fs2.mkdirSync(c, { recursive: true })
-      const probe = path.join(c, '.wk_wprobe')
-      fs2.writeFileSync(probe, 'ok', 'utf8')
-      fs2.unlinkSync(probe)
-      _resolvedCacheDir = c
-      return c
-    } catch {
-      continue
-    }
+    fs2.mkdirSync(cacheDir, { recursive: true })
+    const probe = path.join(cacheDir, '.wk_wprobe')
+    fs2.writeFileSync(probe, 'ok', 'utf8')
+    fs2.unlinkSync(probe)
+  } catch {
+    // 后续 Transformers.js 会在真实加载时抛出更具体的文件系统错误。
   }
-  _resolvedCacheDir = path.join(userDataDir, 'models')
+  _resolvedCacheDir = cacheDir
   return _resolvedCacheDir
 }
 
@@ -201,7 +190,7 @@ async function configureModelSource(transformers, source) {
 
 /**
  * 懒加载本地 Transformers.js pipeline。
- * 首次调用时按 modelSource 下载模型，带进度回调，缓存到安装目录或 userData。
+ * 首次调用时按 modelSource 下载模型，带进度回调，缓存到 userData/models。
  */
 async function getLocalPipeline(modelName, cacheDir, modelSource) {
   if (_localPipeline && _localModel === modelName) return _localPipeline
@@ -824,6 +813,7 @@ module.exports = {
   queueStatus,
   getStatus,
   probeLocalModel,
+  resolveModelCacheDir,
   tokenize,
   cosine,
   setModelProgressCallback,
