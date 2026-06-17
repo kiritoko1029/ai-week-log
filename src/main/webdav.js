@@ -765,6 +765,8 @@ const CONFIG_SYNC_FIELDS = [
   ['filters'],
   ['notes', 'enabled'],
   ['notes', 'miscProject'],
+  ['codexHook', 'enabled'],
+  ['codexHook', 'port'],
   ['ui', 'theme'],
   ['ai', 'provider'],
   ['ai', 'concurrency'],

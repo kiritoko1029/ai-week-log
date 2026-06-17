@@ -25,6 +25,7 @@ const { loadConfig } = require('./config')
 const { createBackup } = require('./webdav')
 const { createUpdaterController } = require('./updater')
 const { createLogger } = require('./logger')
+const { createCodexHookServer } = require('./codex-hook-server')
 const secrets = require('./secrets')
 const tasks = require('./tasks')
 
@@ -44,6 +45,7 @@ let trayHintShown = false
 let currentShortcut = SHORTCUT_DEFAULT
 let updater = null
 let logger = null
+let codexHookServer = null
 
 /** 当前主题是否解析为深色（依据 nativeTheme） */
 function isDark() { return nativeTheme.shouldUseDarkColors }
@@ -282,9 +284,12 @@ function quitApp() {
   // 给同步最多 8 秒，超时也放行退出
   const timeout = new Promise((resolve) => setTimeout(resolve, 8000))
   Promise.race([syncDone, timeout]).finally(() => {
-    globalShortcut.unregisterAll()
-    if (tray) { tray.destroy(); tray = null }
-    app.quit()
+    const closeHook = codexHookServer ? codexHookServer.close() : Promise.resolve()
+    closeHook.finally(() => {
+      globalShortcut.unregisterAll()
+      if (tray) { tray.destroy(); tray = null }
+      app.quit()
+    })
   })
 }
 
@@ -344,7 +349,13 @@ app.whenReady().then(() => {
   })
 
   updater = createUpdaterController({ app, getMainWindow: () => mainWindow })
-  registerIpc({ app, getMainWindow: () => mainWindow, updater })
+  codexHookServer = createCodexHookServer({
+    dir: app.getPath('userData'),
+    getConfig: () => loadConfig(app.getPath('userData')),
+    getToken: () => secrets.getKey(app.getPath('userData'), 'codexHook'),
+    logger,
+  })
+  registerIpc({ app, getMainWindow: () => mainWindow, updater, codexHookServer })
 
   // 先应用主题，使窗口创建时底色正确（避免闪烁）
   applyNativeTheme(cfg.ui && cfg.ui.theme)
@@ -356,6 +367,7 @@ app.whenReady().then(() => {
   // ── WebDAV 启动自动拉取（异步、不阻塞、失败只 warn）──
   triggerAutoSync('pull')
   updater.scheduleStartupCheck()
+  codexHookServer.applyConfig()
 
   // ── IPC ──
   ipcMain.on('quicknote:hide', () => hideQuickNote())
@@ -396,6 +408,7 @@ app.on('before-quit', () => {
 // 退出时务必注销全局快捷键
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  if (codexHookServer) codexHookServer.close()
 })
 
 // 托盘模式下：所有窗口关闭也不退出，保持后台运行

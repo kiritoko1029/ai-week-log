@@ -6,6 +6,7 @@
 const { ipcMain, dialog, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const crypto = require('crypto')
 const {
   loadConfig,
   saveConfig,
@@ -17,6 +18,8 @@ const {
 const { checkGit, isGitRepo, currentBranch, scanGitRepos } = require('./git')
 const { testProvider } = require('./llm')
 const notes = require('./notes')
+const codexPendingNotes = require('./codex-pending-notes')
+const codexHookConfig = require('./codex-hook-config')
 const secrets = require('./secrets')
 const { collect, generate } = require('./pipeline')
 const { isoDate } = require('./utils')
@@ -70,12 +73,14 @@ function normalizeSecretProvider(provider, fallback) {
   return SECRET_PROVIDERS.has(p) ? p : fallback
 }
 
-function registerIpc({ app, getMainWindow, updater }) {
+function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
   const userDataDir = app.getPath('userData')
   const logger = createLogger(userDataDir)
   const getConfig = () => loadConfig(userDataDir)
   const persist = (cfg) => {
-    saveConfig(userDataDir, mergeConfig(defaultConfig(), cfg))
+    const next = mergeConfig(defaultConfig(), cfg)
+    saveConfig(userDataDir, next)
+    if (next.codexHook && next.codexHook.enabled) ensureCodexHookToken()
     return getConfig()
   }
   const getNotesDir = () => {
@@ -139,8 +144,16 @@ function registerIpc({ app, getMainWindow, updater }) {
 
   // ── 配置 ──
   ipcMain.handle('config:get', () => getConfig())
-  ipcMain.handle('config:save', (_e, cfg) => persist(cfg))
-  ipcMain.handle('config:reset', () => persist(defaultConfig()))
+  ipcMain.handle('config:save', async (_e, cfg) => {
+    const saved = persist(cfg)
+    if (codexHookServer && typeof codexHookServer.applyConfig === 'function') await codexHookServer.applyConfig()
+    return saved
+  })
+  ipcMain.handle('config:reset', async () => {
+    const saved = persist(defaultConfig())
+    if (codexHookServer && typeof codexHookServer.applyConfig === 'function') await codexHookServer.applyConfig()
+    return saved
+  })
   ipcMain.handle('config:notesDir', () => getNotesDir())
 
   // ── 环境 ──
@@ -233,6 +246,118 @@ function registerIpc({ app, getMainWindow, updater }) {
   ipcMain.handle('notes:list', (_e, { from, to }) => {
     const cfg = getConfig()
     return notes.loadNotes(getNotesDir(), from, to, cfg.notes.miscProject)
+  })
+
+  // ── Codex hook 待处理小记 ──
+  function ensureCodexHookToken() {
+    let token = secrets.getKey(userDataDir, 'codexHook')
+    if (!token) {
+      token = crypto.randomBytes(32).toString('hex')
+      secrets.setKey(userDataDir, 'codexHook', token)
+    }
+    return token
+  }
+
+  function codexHookEndpoint() {
+    const cfg = getConfig()
+    const status = codexHookServer && typeof codexHookServer.status === 'function'
+      ? codexHookServer.status()
+      : { running: false, host: '127.0.0.1', port: cfg.codexHook && cfg.codexHook.port, error: '服务未初始化' }
+    const port = status.port || (cfg.codexHook && cfg.codexHook.port) || 17321
+    return `http://127.0.0.1:${port}/api/codex/pending-notes`
+  }
+
+  async function prepareCodexHookIntegration() {
+    const token = ensureCodexHookToken()
+    if (codexHookServer && typeof codexHookServer.applyConfig === 'function') {
+      await codexHookServer.applyConfig()
+    }
+    const endpoint = codexHookEndpoint()
+    const hook = codexHookConfig.buildCodexPendingNoteHook({ endpoint, token })
+    return { endpoint, hook }
+  }
+
+  function codexHookInstallStatus() {
+    return codexHookConfig.getCodexHookInstallStatus({ hooksPath: codexHookConfig.defaultHooksPath() })
+  }
+
+  ipcMain.handle('codexNotes:list', () => codexPendingNotes.listPendingNotes(userDataDir))
+  ipcMain.handle('codexNotes:delete', (_e, { ids } = {}) => codexPendingNotes.deletePendingNotes(userDataDir, ids || []))
+  ipcMain.handle('codexNotes:write', (_e, { ids, project, content } = {}) => {
+    const cfg = getConfig()
+    return codexPendingNotes.writePendingNotes(userDataDir, {
+      ids: ids || [],
+      notesDir: getNotesDir(),
+      miscProject: cfg.notes.miscProject,
+      project,
+      content,
+    })
+  })
+  ipcMain.handle('codexNotes:summarize', async (_e, { ids } = {}) => {
+    const cfg = getConfig()
+    const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
+    if (!has) return { error: '未配置 AI API Key' }
+    const provider = require('./llm').createProvider(cfg, key)
+    return codexPendingNotes.summarizePendingNotes(userDataDir, { ids: ids || [], provider })
+  })
+  ipcMain.handle('codexHook:status', () => {
+    const cfg = getConfig()
+    const status = codexHookServer && typeof codexHookServer.status === 'function'
+      ? codexHookServer.status()
+      : { running: false, host: '127.0.0.1', port: 0, error: '服务未初始化' }
+    const installStatus = codexHookInstallStatus()
+    return {
+      enabled: !!(cfg.codexHook && cfg.codexHook.enabled),
+      hasToken: secrets.hasKey(userDataDir, 'codexHook'),
+      endpoint: codexHookEndpoint(),
+      hookInstalled: installStatus.installed,
+      hookCount: installStatus.hookCount,
+      hooksPath: installStatus.hooksPath,
+      hookError: installStatus.error,
+      ...status,
+    }
+  })
+  ipcMain.handle('codexHook:copyConfig', async () => {
+    const cfg = getConfig()
+    const token = ensureCodexHookToken()
+    if (codexHookServer && typeof codexHookServer.applyConfig === 'function') {
+      await codexHookServer.applyConfig()
+    }
+    const endpoint = codexHookEndpoint()
+    const text = codexHookConfig.buildCodexHookSnippet({ endpoint, token })
+    return {
+      enabled: !!(cfg.codexHook && cfg.codexHook.enabled),
+      endpoint,
+      text,
+    }
+  })
+  ipcMain.handle('codexHook:install', async () => {
+    const cfg = getConfig()
+    if (!(cfg.codexHook && cfg.codexHook.enabled)) {
+      cfg.codexHook = cfg.codexHook || {}
+      cfg.codexHook.enabled = true
+      persist(cfg)
+      if (codexHookServer && typeof codexHookServer.applyConfig === 'function') {
+        await codexHookServer.applyConfig()
+      }
+    }
+    const { endpoint, hook } = await prepareCodexHookIntegration()
+    const result = codexHookConfig.installCodexHook({
+      hooksPath: codexHookConfig.defaultHooksPath(),
+      hook,
+    })
+    return {
+      ...result,
+      endpoint,
+      status: codexHookInstallStatus(),
+    }
+  })
+  ipcMain.handle('codexHook:uninstall', () => {
+    const result = codexHookConfig.uninstallCodexHook({ hooksPath: codexHookConfig.defaultHooksPath() })
+    return {
+      ...result,
+      status: codexHookInstallStatus(),
+    }
   })
 
   // ── 采集 / 生成 ──

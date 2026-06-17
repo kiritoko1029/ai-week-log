@@ -40,6 +40,16 @@ contextBridge.exposeInMainWorld('weeklog', {
     saveText: (n) => ipcRenderer.invoke('notes:saveText', n),
     list: (q) => ipcRenderer.invoke('notes:list', q),
   },
+  codexNotes: {
+    list: () => ipcRenderer.invoke('codexNotes:list'),
+    delete: (ids) => ipcRenderer.invoke('codexNotes:delete', { ids }),
+    write: (q) => ipcRenderer.invoke('codexNotes:write', q),
+    summarize: (ids) => ipcRenderer.invoke('codexNotes:summarize', { ids }),
+    status: () => ipcRenderer.invoke('codexHook:status'),
+    copyConfig: () => ipcRenderer.invoke('codexHook:copyConfig'),
+    installHook: () => ipcRenderer.invoke('codexHook:install'),
+    uninstallHook: () => ipcRenderer.invoke('codexHook:uninstall'),
+  },
   collect: (q) => ipcRenderer.invoke('collect', q),
   generate: (q) => ipcRenderer.invoke('generate', q),
   onProgress: (cb) => {

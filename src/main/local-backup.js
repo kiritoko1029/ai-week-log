@@ -20,6 +20,8 @@ const CONFIG_BACKUP_FIELDS = [
   ['filters'],
   ['notes', 'enabled'],
   ['notes', 'miscProject'],
+  ['codexHook', 'enabled'],
+  ['codexHook', 'port'],
   ['ui', 'theme'],
   ['ai', 'provider'],
   ['ai', 'concurrency'],

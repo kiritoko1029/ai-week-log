@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity, ArchiveRestore } from 'lucide-react'
+import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity, ArchiveRestore, Copy } from 'lucide-react'
 import { ProviderBadge } from '@/components/BrandIcons'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus, WebdavBackupInfo } from '@/types/weeklog'
+import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus, WebdavBackupInfo, CodexHookStatus } from '@/types/weeklog'
 
 export function SettingsPage() {
   const { config, save, refresh: refreshConfig } = useConfig()
@@ -55,6 +55,10 @@ export function SettingsPage() {
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [downloadingUpdate, setDownloadingUpdate] = useState(false)
   const [creatingLocalBackup, setCreatingLocalBackup] = useState(false)
+  const [codexHookStatus, setCodexHookStatus] = useState<CodexHookStatus | null>(null)
+  const [copyingCodexHookConfig, setCopyingCodexHookConfig] = useState(false)
+  const [installingCodexHook, setInstallingCodexHook] = useState(false)
+  const [uninstallingCodexHook, setUninstallingCodexHook] = useState(false)
 
   const recorder = useShortcutRecorder(config?.ui?.quickNoteShortcut || 'CommandOrControl+Shift+L')
 
@@ -102,6 +106,14 @@ export function SettingsPage() {
     })
     return off
   }, [])
+
+  const refreshCodexHookStatus = useCallback(() => {
+    api.codexNotes.status().then(setCodexHookStatus).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    refreshCodexHookStatus()
+  }, [refreshCodexHookStatus])
 
   const patch = useCallback((updater: (c: Config) => void) => {
     setDraft((prev) => {
@@ -165,9 +177,10 @@ export function SettingsPage() {
     }
     await save(draft)
     const sr = await api.shortcut.apply()
+    refreshCodexHookStatus()
     if (sr && !sr.ok) toast.warning('快捷键可能被占用，已回退默认')
     else toast.success('设置已保存')
-  }, [draft, apiKey, webdavPassword, recorder.accel, save])
+  }, [draft, apiKey, webdavPassword, recorder.accel, save, refreshCodexHookStatus])
 
   // WebDAV：测试连接
   const testWebdav = useCallback(async () => {
@@ -338,6 +351,64 @@ export function SettingsPage() {
     }
   }, [draft, save])
 
+  const copyCodexHookConfig = useCallback(async () => {
+    if (!draft) return
+    setCopyingCodexHookConfig(true)
+    try {
+      await save(draft)
+      const r = await api.codexNotes.copyConfig()
+      await navigator.clipboard.writeText(r.text)
+      refreshCodexHookStatus()
+      toast.success('Codex hook 配置片段已复制')
+    } catch (e: any) {
+      toast.error('复制失败', { description: e?.message || '未知错误' })
+    } finally {
+      setCopyingCodexHookConfig(false)
+    }
+  }, [draft, save, refreshCodexHookStatus])
+
+  const installCodexHook = useCallback(async () => {
+    if (!draft) return
+    setInstallingCodexHook(true)
+    try {
+      await save(draft)
+      const r = await api.codexNotes.installHook()
+      const nextCfg = await refreshConfig()
+      setDraft(structuredClone(nextCfg))
+      refreshCodexHookStatus()
+      if (r.ok) {
+        toast.success('Codex Hook 已安装', {
+          description: r.backupPath ? `已备份原 hooks.json：${r.backupPath}` : r.hooksPath,
+        })
+      } else {
+        toast.error('安装失败', { description: r.error || '未知错误' })
+      }
+    } catch (e: any) {
+      toast.error('安装失败', { description: e?.message || '未知错误' })
+    } finally {
+      setInstallingCodexHook(false)
+    }
+  }, [draft, save, refreshConfig, refreshCodexHookStatus])
+
+  const uninstallCodexHook = useCallback(async () => {
+    setUninstallingCodexHook(true)
+    try {
+      const r = await api.codexNotes.uninstallHook()
+      refreshCodexHookStatus()
+      if (r.ok) {
+        toast.success(r.removed ? 'Codex Hook 已卸载' : '未发现 WeekLog 管理的 Hook', {
+          description: r.backupPath ? `已备份原 hooks.json：${r.backupPath}` : r.hooksPath,
+        })
+      } else {
+        toast.error('卸载失败', { description: r.error || '未知错误' })
+      }
+    } catch (e: any) {
+      toast.error('卸载失败', { description: e?.message || '未知错误' })
+    } finally {
+      setUninstallingCodexHook(false)
+    }
+  }, [refreshCodexHookStatus])
+
   if (!draft) {
     return <div className="py-8 text-center text-sm text-muted-foreground">加载配置中…</div>
   }
@@ -481,6 +552,96 @@ export function SettingsPage() {
               <strong>隐私提示：</strong>笔记往往含更敏感业务信息。commit 与笔记一并受脱敏规则约束，可指向私有网关实现数据不出内网。
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Codex hook 小记 */}
+      <Card className="border-l-4 border-l-fuchsia-500">
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>Codex Hook 小记</CardTitle>
+          <Badge variant={codexHookStatus?.running ? 'success' : draft.codexHook.enabled ? 'destructive' : 'secondary'}>
+            {codexHookStatus?.running ? '运行中' : draft.codexHook.enabled ? '未运行' : '未启用'}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between gap-3 py-2">
+            <div>
+              <h4 className="text-sm font-semibold">允许 Codex 写入待处理小记池</h4>
+              <p className="text-xs text-muted-foreground">开启后只接受本机 loopback + token 请求，内容先进入待处理池。</p>
+            </div>
+            <Switch
+              checked={draft.codexHook.enabled}
+              onCheckedChange={(v) => patch((c) => { c.codexHook.enabled = v })}
+            />
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <div className="min-w-[140px] space-y-1.5">
+              <Label>本地端口</Label>
+              <Input
+                type="number"
+                min={1024}
+                max={65535}
+                value={draft.codexHook.port}
+                onChange={(e) => patch((c) => { c.codexHook.port = Number(e.target.value) || 17321 })}
+              />
+            </div>
+            <div className="min-w-[260px] flex-1 space-y-1.5">
+              <Label>接口地址</Label>
+              <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                {codexHookStatus?.endpoint || `http://127.0.0.1:${draft.codexHook.port}/api/codex/pending-notes`}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <div className="min-w-[160px] space-y-1.5">
+              <Label>Codex Hook</Label>
+              <Badge variant={codexHookStatus?.hookInstalled ? 'success' : 'secondary'}>
+                {codexHookStatus?.hookInstalled ? `已安装${codexHookStatus.hookCount > 1 ? ` × ${codexHookStatus.hookCount}` : ''}` : '未安装'}
+              </Badge>
+            </div>
+            <div className="min-w-[260px] flex-1 space-y-1.5">
+              <Label>配置文件</Label>
+              <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                {codexHookStatus?.hooksPath || '~/.codex/hooks.json'}
+              </p>
+            </div>
+          </div>
+          {codexHookStatus?.error && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+              {codexHookStatus.error}
+            </div>
+          )}
+          {codexHookStatus?.hookError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+              {codexHookStatus.hookError}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" onClick={installCodexHook} disabled={installingCodexHook}>
+              {installingCodexHook ? <RefreshCw className="animate-spin" /> : <Zap />}
+              一键安装 Hook
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={uninstallCodexHook}
+              disabled={uninstallingCodexHook || !codexHookStatus?.hookInstalled}
+            >
+              {uninstallingCodexHook ? <RefreshCw className="animate-spin" /> : <Trash2 />}
+              一键卸载 Hook
+            </Button>
+            <Button type="button" variant="outline" onClick={copyCodexHookConfig} disabled={!draft.codexHook.enabled || copyingCodexHookConfig}>
+              {copyingCodexHookConfig ? <RefreshCw className="animate-spin" /> : <Copy />}
+              复制 Codex 配置片段
+            </Button>
+            <Button type="button" variant="ghost" onClick={refreshCodexHookStatus}>
+              <RefreshCw />
+              刷新状态
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Token 仅保存在本机密钥存储中，不在界面展示明文。一键安装会把 token 写入本机 Codex hooks.json；复制配置片段会把 token 写入剪贴板。
+          </p>
         </CardContent>
       </Card>
 

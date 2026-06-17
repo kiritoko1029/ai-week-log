@@ -43,6 +43,10 @@ export interface Config {
     miscProject: string
     dir?: string
   }
+  codexHook: {
+    enabled: boolean
+    port: number
+  }
   ui: {
     theme: 'auto' | 'light' | 'dark'
     quickNoteShortcut: string
@@ -84,6 +88,60 @@ export interface Note {
   project: string | null
   content: string
   source: string
+}
+
+export interface CodexPendingNote {
+  id: string
+  source: 'codex'
+  status: 'pending' | 'written' | 'deleted'
+  cwd: string
+  project: string
+  summary: string
+  branch?: string
+  changedFiles: string[]
+  title?: string
+  createdAt: string
+  writtenAt?: string
+}
+
+export interface CodexHookStatus {
+  enabled: boolean
+  hasToken: boolean
+  running: boolean
+  host: string
+  port: number
+  endpoint: string
+  error: string
+  hookInstalled: boolean
+  hookCount: number
+  hooksPath: string
+  hookError: string
+}
+
+export interface CodexHookCopyConfigResult {
+  enabled: boolean
+  endpoint: string
+  text: string
+}
+
+export interface CodexHookInstallStatus {
+  hooksPath: string
+  exists: boolean
+  installed: boolean
+  hookCount: number
+  error: string
+}
+
+export interface CodexHookInstallResult {
+  ok: boolean
+  installed?: boolean
+  removed?: number
+  replaced?: number
+  hooksPath?: string
+  backupPath?: string
+  endpoint?: string
+  error?: string
+  status?: CodexHookInstallStatus
 }
 
 export interface CollectStats {
@@ -454,6 +512,16 @@ export interface WeeklogAPI {
     getText: (date: string) => Promise<string>
     saveText: (n: { date: string; text: string }) => Promise<{ ok: boolean }>
     list: (q: { from: string; to: string }) => Promise<Note[]>
+  }
+  codexNotes: {
+    list: () => Promise<CodexPendingNote[]>
+    delete: (ids: string[]) => Promise<{ deleted: number }>
+    write: (q: { ids: string[]; project?: string; content?: string }) => Promise<{ written: number; files: string[] }>
+    summarize: (ids: string[]) => Promise<{ text?: string; model?: string; error?: string }>
+    status: () => Promise<CodexHookStatus>
+    copyConfig: () => Promise<CodexHookCopyConfigResult>
+    installHook: () => Promise<CodexHookInstallResult>
+    uninstallHook: () => Promise<CodexHookInstallResult>
   }
   collect: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<CollectResult>
   generate: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<Report>

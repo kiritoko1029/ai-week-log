@@ -27,6 +27,10 @@ function defaultConfig() {
       enabled: true,
       miscProject: '日常工作',
     },
+    codexHook: {
+      enabled: false,
+      port: 17321,
+    },
     ui: {
       theme: 'auto', // auto | light | dark
       quickNoteShortcut: 'CommandOrControl+Shift+L', // Electron accelerator（全局唤起快速记笔记）
