@@ -22,9 +22,12 @@ if (process.platform === 'win32') {
 const { registerIpc } = require('./ipc')
 const { trayIconBuffer } = require('./icon')
 const { loadConfig } = require('./config')
-const { syncAll } = require('./webdav')
+const { createBackup } = require('./webdav')
 const { createUpdaterController } = require('./updater')
+const { createLogger } = require('./logger')
+const { createCodexHookServer } = require('./codex-hook-server')
 const secrets = require('./secrets')
+const tasks = require('./tasks')
 
 const APP_ID = 'com.weeklog.desktop'
 const SHORTCUT_DEFAULT = 'CommandOrControl+Shift+L'
@@ -43,6 +46,8 @@ let isQuitting = false
 let trayHintShown = false
 let currentShortcut = SHORTCUT_DEFAULT
 let updater = null
+let logger = null
+let codexHookServer = null
 
 /** 当前主题是否解析为深色（依据 nativeTheme） */
 function isDark() { return nativeTheme.shouldUseDarkColors }
@@ -299,14 +304,17 @@ function quitApp() {
   // 给同步最多 8 秒，超时也放行退出
   const timeout = new Promise((resolve) => setTimeout(resolve, 8000))
   Promise.race([syncDone, timeout]).finally(() => {
-    globalShortcut.unregisterAll()
-    if (tray) { tray.destroy(); tray = null }
-    app.quit()
+    const closeHook = codexHookServer ? codexHookServer.close() : Promise.resolve()
+    closeHook.finally(() => {
+      globalShortcut.unregisterAll()
+      if (tray) { tray.destroy(); tray = null }
+      app.quit()
+    })
   })
 }
 
 /**
- * 触发 WebDAV 自动同步。
+ * 触发 WebDAV 自动备份。
  * @param {'pull'|'push'} action
  * @returns {Promise<void>} 同步完成（或失败）后 resolve
  */
@@ -316,16 +324,28 @@ function triggerAutoSync(action) {
     const wcfg = cfg.webdav || {}
     if (!wcfg.enabled || !wcfg.url) return Promise.resolve()
     const mode = wcfg.autoSync || 'both'
-    const shouldRun = mode === 'both' || mode === action
+    const shouldRun = action === 'push' && (mode === 'push' || mode === 'both')
     if (!shouldRun) return Promise.resolve()
     const password = secrets.getKey(app.getPath('userData'), 'webdav')
-    return syncAll({ cfg, dir: app.getPath('userData'), password, direction: action })
+    const label = '自动备份'
+    const taskId = tasks.create('webdav', 'WebDAV 自动备份', {
+      detail: '正在创建远端备份...',
+      progress: { done: 0, total: 0, label: '备份' },
+    })
+    return createBackup({ cfg, dir: app.getPath('userData'), password, appVersion: app.getVersion(), logger })
       .then((r) => {
-        console.log(`[webdav] 自动${action === 'pull' ? '拉取' : '推送'}完成：拉取 ${r.pulled}，推送 ${r.pushed}`)
+        console.log(`[webdav] 自动备份完成：${r.name}`)
+        if (logger) logger.info('webdav.auto', '自动备份完成', { action, name: r.name, bytes: r.bytes })
+        tasks.done(taskId, r)
       })
-      .catch((e) => console.warn(`[webdav] 自动${action === 'pull' ? '拉取' : '推送'}失败：`, e.message))
+      .catch((e) => {
+        console.warn('[webdav] 自动备份失败：', e.message)
+        if (logger) logger.error('webdav.auto', '自动备份失败', { action, error: e.message })
+        tasks.error(taskId, e.message || 'WebDAV 自动备份失败')
+      })
   } catch (e) {
-    console.warn('[webdav] 自动同步初始化失败：', e.message)
+    console.warn('[webdav] 自动备份初始化失败：', e.message)
+    if (logger) logger.error('webdav.auto', '自动备份初始化失败', { action, error: e.message })
     return Promise.resolve()
   }
 }
@@ -341,9 +361,21 @@ app.whenReady().then(() => {
   }
 
   const cfg = loadConfig(app.getPath('userData'))
+  logger = createLogger(app.getPath('userData'))
+  logger.info('app.lifecycle', '应用启动', {
+    version: app.getVersion(),
+    platform: process.platform,
+    dev: process.env.WEEKLOG_DEV === '1',
+  })
 
-  updater = createUpdaterController({ app, getMainWindow: () => mainWindow })
-  registerIpc({ app, getMainWindow: () => mainWindow, updater })
+  updater = createUpdaterController({ app, getMainWindow: () => mainWindow, logger })
+  codexHookServer = createCodexHookServer({
+    dir: app.getPath('userData'),
+    getConfig: () => loadConfig(app.getPath('userData')),
+    getToken: () => secrets.getKey(app.getPath('userData'), 'codexHook'),
+    logger,
+  })
+  registerIpc({ app, getMainWindow: () => mainWindow, updater, codexHookServer })
 
   // 先应用主题，使窗口创建时底色正确（避免闪烁）
   applyNativeTheme(cfg.ui && cfg.ui.theme)
@@ -355,6 +387,7 @@ app.whenReady().then(() => {
   // ── WebDAV 启动自动拉取（异步、不阻塞、失败只 warn）──
   triggerAutoSync('pull')
   updater.scheduleStartupCheck()
+  codexHookServer.applyConfig()
 
   // ── IPC ──
   ipcMain.on('quicknote:hide', () => hideQuickNote())
@@ -395,6 +428,7 @@ app.on('before-quit', () => {
 // 退出时务必注销全局快捷键
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  if (codexHookServer) codexHookServer.close()
 })
 
 // 托盘模式下：所有窗口关闭也不退出，保持后台运行

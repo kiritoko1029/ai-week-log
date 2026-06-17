@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Plus, Pencil, RefreshCw, Loader2, Lightbulb } from 'lucide-react'
+import { Plus, Pencil, RefreshCw, Loader2, Lightbulb, Trash2, WandSparkles, CheckCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
@@ -15,7 +15,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { ProjectSelect } from '@/components/ProjectSelect'
-import type { Note, MemoryInferResult } from '@/types/weeklog'
+import type { Note, MemoryInferResult, CodexPendingNote } from '@/types/weeklog'
 
 type Filter = 'all' | 'project' | 'misc'
 
@@ -43,6 +43,13 @@ export function NotesPage() {
   const [rawText, setRawText] = useState('')
   const [rawDate, setRawDate] = useState(todayISO())
 
+  // Codex hook 待处理小记池
+  const [pendingNotes, setPendingNotes] = useState<CodexPendingNote[]>([])
+  const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([])
+  const [loadingPendingNotes, setLoadingPendingNotes] = useState(true)
+  const [pendingBusy, setPendingBusy] = useState(false)
+  const [pendingSummaryDraft, setPendingSummaryDraft] = useState('')
+
   // AI 记忆推断（写笔记时辅助）
   const [inferResult, setInferResult] = useState<MemoryInferResult | null>(null)
   const [inferring, setInferring] = useState(false)
@@ -60,9 +67,26 @@ export function NotesPage() {
     }
   }, [from, to])
 
+  const loadPendingNotes = useCallback(async () => {
+    setLoadingPendingNotes(true)
+    try {
+      const list = await api.codexNotes.list()
+      setPendingNotes(list)
+      setSelectedPendingIds((prev) => prev.filter((id) => list.some((item) => item.id === id)))
+    } catch (e) {
+      toast.error('加载待处理小记失败', { description: (e as Error).message })
+    } finally {
+      setLoadingPendingNotes(false)
+    }
+  }, [])
+
   useEffect(() => {
     loadNotes()
   }, [loadNotes])
+
+  useEffect(() => {
+    loadPendingNotes()
+  }, [loadPendingNotes])
 
   // AI 记忆推断：用户输入笔记时（debounce 800ms），调记忆推断项目
   useEffect(() => {
@@ -156,6 +180,90 @@ export function NotesPage() {
   }, [filtered])
 
   const projects = config?.repos.map((r) => ({ value: r.name, label: r.alias || r.name })) ?? []
+  const selectedPendingSet = useMemo(() => new Set(selectedPendingIds), [selectedPendingIds])
+  const allPendingSelected = pendingNotes.length > 0 && selectedPendingIds.length === pendingNotes.length
+
+  const togglePendingNote = useCallback((id: string) => {
+    setSelectedPendingIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+  }, [])
+
+  const toggleAllPendingNotes = useCallback(() => {
+    setSelectedPendingIds((prev) => prev.length === pendingNotes.length ? [] : pendingNotes.map((item) => item.id))
+  }, [pendingNotes])
+
+  const deleteSelectedPendingNotes = useCallback(async () => {
+    if (!selectedPendingIds.length) return
+    setPendingBusy(true)
+    try {
+      const r = await api.codexNotes.delete(selectedPendingIds)
+      toast.success(`已移除 ${r.deleted} 条待处理小记`)
+      setSelectedPendingIds([])
+      setPendingSummaryDraft('')
+      await loadPendingNotes()
+    } catch (e) {
+      toast.error('移除失败', { description: (e as Error).message })
+    } finally {
+      setPendingBusy(false)
+    }
+  }, [selectedPendingIds, loadPendingNotes])
+
+  const writeSelectedPendingNotes = useCallback(async () => {
+    if (!selectedPendingIds.length) return
+    setPendingBusy(true)
+    try {
+      const r = await api.codexNotes.write({ ids: selectedPendingIds })
+      toast.success(`已写入 ${r.written} 条小记`)
+      setSelectedPendingIds([])
+      setPendingSummaryDraft('')
+      await Promise.all([loadPendingNotes(), loadNotes(), refreshRaw(todayISO())])
+    } catch (e) {
+      toast.error('写入失败', { description: (e as Error).message })
+    } finally {
+      setPendingBusy(false)
+    }
+  }, [selectedPendingIds, loadPendingNotes, loadNotes, refreshRaw])
+
+  const summarizeSelectedPendingNotes = useCallback(async () => {
+    if (!selectedPendingIds.length) return
+    setPendingBusy(true)
+    try {
+      const r = await api.codexNotes.summarize(selectedPendingIds)
+      if (r.error) {
+        toast.error('AI 总结失败', { description: r.error })
+        return
+      }
+      if (r.text) {
+        setPendingSummaryDraft(r.text)
+        toast.success('AI 总结已生成，可编辑后写入')
+      }
+    } catch (e) {
+      toast.error('AI 总结失败', { description: (e as Error).message })
+    } finally {
+      setPendingBusy(false)
+    }
+  }, [selectedPendingIds, pendingNotes])
+
+  const writePendingSummaryDraft = useCallback(async () => {
+    const content = pendingSummaryDraft.trim()
+    if (!selectedPendingIds.length || !content) return
+    setPendingBusy(true)
+    try {
+      const first = pendingNotes.find((item) => selectedPendingIds.includes(item.id))
+      const r = await api.codexNotes.write({
+        ids: selectedPendingIds,
+        project: first?.project || '',
+        content,
+      })
+      toast.success(`已写入总结小记，处理 ${r.written} 条候选`)
+      setSelectedPendingIds([])
+      setPendingSummaryDraft('')
+      await Promise.all([loadPendingNotes(), loadNotes(), refreshRaw(todayISO())])
+    } catch (e) {
+      toast.error('写入总结失败', { description: (e as Error).message })
+    } finally {
+      setPendingBusy(false)
+    }
+  }, [pendingSummaryDraft, selectedPendingIds, pendingNotes, loadPendingNotes, loadNotes, refreshRaw])
 
   return (
     <div className="space-y-6">
@@ -232,6 +340,103 @@ export function NotesPage() {
                   )}
                 </>
               ) : null}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Codex hook 待处理小记池 */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between gap-3">
+          <div>
+            <CardTitle>Codex Hook 待处理小记池</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">Codex 完成任务后先进入这里，确认后再写入正式笔记。</p>
+          </div>
+          <Badge variant={pendingNotes.length ? 'secondary' : 'muted'} className="font-mono">{pendingNotes.length} 条</Badge>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={toggleAllPendingNotes} disabled={!pendingNotes.length || pendingBusy}>
+              <CheckCheck />
+              {allPendingSelected ? '取消全选' : '全选'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={summarizeSelectedPendingNotes} disabled={!selectedPendingIds.length || pendingBusy}>
+              {pendingBusy ? <Loader2 className="animate-spin" /> : <WandSparkles />}
+              AI 总结
+            </Button>
+            <Button size="sm" onClick={writeSelectedPendingNotes} disabled={!selectedPendingIds.length || pendingBusy} className="bg-violet-600 text-white hover:bg-violet-600/90">
+              <Plus />
+              写入小记
+            </Button>
+            <Button variant="outline" size="sm" onClick={deleteSelectedPendingNotes} disabled={!selectedPendingIds.length || pendingBusy}>
+              <Trash2 />
+              移除
+            </Button>
+            <Button variant="ghost" size="sm" onClick={loadPendingNotes} disabled={loadingPendingNotes || pendingBusy}>
+              <RefreshCw className={loadingPendingNotes ? 'animate-spin' : ''} />
+              刷新
+            </Button>
+          </div>
+
+          {loadingPendingNotes ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              <Loader2 className="mx-auto mb-2 size-4 animate-spin" />
+              加载待处理小记…
+            </div>
+          ) : pendingNotes.length === 0 ? (
+            <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">暂无待处理小记</div>
+          ) : (
+            <div className="space-y-2">
+              {pendingNotes.map((item) => (
+                <label
+                  key={item.id}
+                  className={cn(
+                    'flex cursor-pointer gap-3 rounded-md border p-3 transition-colors hover:bg-muted/40',
+                    selectedPendingSet.has(item.id) && 'border-violet-400 bg-violet-50/60 dark:bg-violet-950/20'
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedPendingSet.has(item.id)}
+                    onChange={() => togglePendingNote(item.id)}
+                    className="mt-1 size-4 accent-violet-600"
+                  />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">{item.project || miscProject}</Badge>
+                      {item.branch && <Badge variant="outline" className="font-mono">{item.branch}</Badge>}
+                      <span className="font-mono text-xs text-muted-foreground">{new Date(item.createdAt).toLocaleString()}</span>
+                    </div>
+                    <p className="text-sm leading-relaxed text-foreground/85">{item.summary}</p>
+                    {item.changedFiles.length > 0 && (
+                      <p className="truncate font-mono text-xs text-muted-foreground">
+                        {item.changedFiles.slice(0, 6).join(' · ')}
+                        {item.changedFiles.length > 6 ? ` · 等 ${item.changedFiles.length} 个文件` : ''}
+                      </p>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {pendingSummaryDraft && (
+            <div className="space-y-2 rounded-md border border-violet-300/70 bg-violet-50/60 p-3 dark:border-violet-800/70 dark:bg-violet-950/20">
+              <Label>AI 总结草稿</Label>
+              <Textarea
+                value={pendingSummaryDraft}
+                onChange={(e) => setPendingSummaryDraft(e.target.value)}
+                className="min-h-[96px]"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" onClick={writePendingSummaryDraft} disabled={pendingBusy || !selectedPendingIds.length || !pendingSummaryDraft.trim()} className="bg-violet-600 text-white hover:bg-violet-600/90">
+                  <Plus />
+                  写入总结小记
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setPendingSummaryDraft('')} disabled={pendingBusy}>
+                  清空草稿
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

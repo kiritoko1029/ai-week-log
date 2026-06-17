@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity } from 'lucide-react'
+import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity, ArchiveRestore, Copy } from 'lucide-react'
 import { ProviderBadge } from '@/components/BrandIcons'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -17,10 +17,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus } from '@/types/weeklog'
+import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus, WebdavBackupInfo, CodexHookStatus } from '@/types/weeklog'
 
 export function SettingsPage() {
-  const { config, save } = useConfig()
+  const { config, save, refresh: refreshConfig } = useConfig()
   const [draft, setDraft] = useState<Config | null>(null)
   const [notesDirDisplay, setNotesDirDisplay] = useState('—')
   const [showKey, setShowKey] = useState(false)
@@ -34,7 +34,11 @@ export function SettingsPage() {
   const [showWebdavPass, setShowWebdavPass] = useState(false)
   const [webdavStatus, setWebdavStatus] = useState<WebdavStatus | null>(null)
   const [testingWebdav, setTestingWebdav] = useState(false)
-  const [syncingWebdav, setSyncingWebdav] = useState(false)
+  const [webdavBusy, setWebdavBusy] = useState(false)
+  const [backupDialogOpen, setBackupDialogOpen] = useState(false)
+  const [backups, setBackups] = useState<WebdavBackupInfo[]>([])
+  const [loadingBackups, setLoadingBackups] = useState(false)
+  const [selectedBackup, setSelectedBackup] = useState('')
 
   // AI 连接测试状态
   const [testingAi, setTestingAi] = useState(false)
@@ -50,6 +54,11 @@ export function SettingsPage() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [downloadingUpdate, setDownloadingUpdate] = useState(false)
+  const [creatingLocalBackup, setCreatingLocalBackup] = useState(false)
+  const [codexHookStatus, setCodexHookStatus] = useState<CodexHookStatus | null>(null)
+  const [copyingCodexHookConfig, setCopyingCodexHookConfig] = useState(false)
+  const [installingCodexHook, setInstallingCodexHook] = useState(false)
+  const [uninstallingCodexHook, setUninstallingCodexHook] = useState(false)
 
   const recorder = useShortcutRecorder(config?.ui?.quickNoteShortcut || 'CommandOrControl+Shift+L')
 
@@ -97,6 +106,14 @@ export function SettingsPage() {
     })
     return off
   }, [])
+
+  const refreshCodexHookStatus = useCallback(() => {
+    api.codexNotes.status().then(setCodexHookStatus).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    refreshCodexHookStatus()
+  }, [refreshCodexHookStatus])
 
   const patch = useCallback((updater: (c: Config) => void) => {
     setDraft((prev) => {
@@ -160,9 +177,10 @@ export function SettingsPage() {
     }
     await save(draft)
     const sr = await api.shortcut.apply()
+    refreshCodexHookStatus()
     if (sr && !sr.ok) toast.warning('快捷键可能被占用，已回退默认')
     else toast.success('设置已保存')
-  }, [draft, apiKey, webdavPassword, recorder.accel, save])
+  }, [draft, apiKey, webdavPassword, recorder.accel, save, refreshCodexHookStatus])
 
   // WebDAV：测试连接
   const testWebdav = useCallback(async () => {
@@ -171,9 +189,9 @@ export function SettingsPage() {
     try {
       const r = await api.webdav.test(draft.webdav.url, draft.webdav.username, webdavPassword)
       if (r.ok) toast.success(r.message)
-      else toast.error(r.message)
+      else toast.error('WebDAV 连接失败', { description: r.message })
     } catch (e: any) {
-      toast.error('测试失败：' + (e?.message || '未知错误'))
+      toast.error('WebDAV 连接失败', { description: e?.message || '未知错误' })
     } finally {
       setTestingWebdav(false)
     }
@@ -194,25 +212,63 @@ export function SettingsPage() {
     }
   }, [draft, apiKey])
 
-  // WebDAV：立即同步
-  const syncNow = useCallback(async (direction: 'pull' | 'push' | 'both') => {
-    setSyncingWebdav(true)
+  const loadBackups = useCallback(async () => {
+    setLoadingBackups(true)
     try {
-      // 先确保配置已保存（同步用最新配置）
-      if (draft) await save(draft)
-      const r = await api.webdav.syncNow(direction)
-      await api.webdav.status().then(setWebdavStatus)
-      if (r.errors.length) {
-        toast.warning(`同步完成：拉取 ${r.pulled}，推送 ${r.pushed}，${r.errors.length} 个错误`)
-      } else {
-        toast.success(`同步完成：拉取 ${r.pulled}，推送 ${r.pushed}`)
-      }
+      const list = await api.webdav.listBackups()
+      setBackups(list)
+      if (!selectedBackup && list[0]) setSelectedBackup(list[0].name)
     } catch (e: any) {
-      toast.error('同步失败：' + (e?.message || '未知错误'))
+      toast.error('读取备份列表失败', { description: e?.message || '未知错误' })
     } finally {
-      setSyncingWebdav(false)
+      setLoadingBackups(false)
+    }
+  }, [selectedBackup])
+
+  const openBackupDialog = useCallback(() => {
+    setBackupDialogOpen(true)
+    loadBackups()
+  }, [loadBackups])
+
+  // WebDAV：立即备份
+  const backupNow = useCallback(async () => {
+    setWebdavBusy(true)
+    try {
+      if (draft) await save(draft)
+      const r = await api.webdav.backupNow()
+      await api.webdav.status().then(setWebdavStatus)
+      toast.success('WebDAV 备份完成', {
+        description: `${r.name}${typeof r.pruned === 'number' && r.pruned > 0 ? `，已清理 ${r.pruned} 份旧备份` : ''}`,
+      })
+    } catch (e: any) {
+      await api.webdav.status().then(setWebdavStatus).catch(() => {})
+      toast.error('WebDAV 备份失败', { description: e?.message || '未知错误' })
+    } finally {
+      setWebdavBusy(false)
     }
   }, [draft, save])
+
+  // WebDAV：恢复备份
+  const restoreBackup = useCallback(async () => {
+    if (!selectedBackup) return
+    if (!confirm(`恢复备份 ${selectedBackup}？当前本地数据会被该备份覆盖，恢复前会自动保存一份本机安全备份。`)) return
+    setWebdavBusy(true)
+    try {
+      const r = await api.webdav.restoreBackup(selectedBackup)
+      await api.webdav.status().then(setWebdavStatus)
+      const nextCfg = await refreshConfig()
+      setDraft(structuredClone(nextCfg))
+      setBackupDialogOpen(false)
+      toast.success('WebDAV 备份已恢复', {
+        description: `恢复 ${r.restoredFiles} 个文件，本机安全备份：${r.safetyName}`,
+      })
+    } catch (e: any) {
+      await api.webdav.status().then(setWebdavStatus).catch(() => {})
+      toast.error('WebDAV 恢复失败', { description: e?.message || '未知错误' })
+    } finally {
+      setWebdavBusy(false)
+    }
+  }, [selectedBackup, refreshConfig])
 
   // 记忆：重建
   const rebuildMemory = useCallback(async () => {
@@ -278,6 +334,81 @@ export function SettingsPage() {
     }
   }, [])
 
+  const createLocalBackup = useCallback(async () => {
+    setCreatingLocalBackup(true)
+    try {
+      const backupDir = await api.dialog.pickBackupFolder()
+      if (!backupDir) return
+      if (draft) await save(draft)
+      const r = await api.localBackup.create(backupDir)
+      toast.success('本地备份已保存到本地文件夹', {
+        description: `${r.name} · ${(r.bytes / 1024).toFixed(1)} KB`,
+      })
+    } catch (e: any) {
+      toast.error('本地备份失败', { description: e?.message || '未知错误' })
+    } finally {
+      setCreatingLocalBackup(false)
+    }
+  }, [draft, save])
+
+  const copyCodexHookConfig = useCallback(async () => {
+    if (!draft) return
+    setCopyingCodexHookConfig(true)
+    try {
+      await save(draft)
+      const r = await api.codexNotes.copyConfig()
+      await navigator.clipboard.writeText(r.text)
+      refreshCodexHookStatus()
+      toast.success('Codex hook 配置片段已复制')
+    } catch (e: any) {
+      toast.error('复制失败', { description: e?.message || '未知错误' })
+    } finally {
+      setCopyingCodexHookConfig(false)
+    }
+  }, [draft, save, refreshCodexHookStatus])
+
+  const installCodexHook = useCallback(async () => {
+    if (!draft) return
+    setInstallingCodexHook(true)
+    try {
+      await save(draft)
+      const r = await api.codexNotes.installHook()
+      const nextCfg = await refreshConfig()
+      setDraft(structuredClone(nextCfg))
+      refreshCodexHookStatus()
+      if (r.ok) {
+        toast.success('Codex Hook 已安装', {
+          description: r.backupPath ? `已备份原 hooks.json：${r.backupPath}` : r.hooksPath,
+        })
+      } else {
+        toast.error('安装失败', { description: r.error || '未知错误' })
+      }
+    } catch (e: any) {
+      toast.error('安装失败', { description: e?.message || '未知错误' })
+    } finally {
+      setInstallingCodexHook(false)
+    }
+  }, [draft, save, refreshConfig, refreshCodexHookStatus])
+
+  const uninstallCodexHook = useCallback(async () => {
+    setUninstallingCodexHook(true)
+    try {
+      const r = await api.codexNotes.uninstallHook()
+      refreshCodexHookStatus()
+      if (r.ok) {
+        toast.success(r.removed ? 'Codex Hook 已卸载' : '未发现 WeekLog 管理的 Hook', {
+          description: r.backupPath ? `已备份原 hooks.json：${r.backupPath}` : r.hooksPath,
+        })
+      } else {
+        toast.error('卸载失败', { description: r.error || '未知错误' })
+      }
+    } catch (e: any) {
+      toast.error('卸载失败', { description: e?.message || '未知错误' })
+    } finally {
+      setUninstallingCodexHook(false)
+    }
+  }, [refreshCodexHookStatus])
+
   if (!draft) {
     return <div className="py-8 text-center text-sm text-muted-foreground">加载配置中…</div>
   }
@@ -287,7 +418,7 @@ export function SettingsPage() {
   const tempPct = Math.round((sub.temperature ?? 0.3) * 100)
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <div>
         <h2 className="text-2xl font-bold tracking-tight">AI 与输出设置</h2>
         <p className="text-sm text-muted-foreground">配置 LLM 后端、笔记、输出格式、并发与容错策略</p>
@@ -355,7 +486,6 @@ export function SettingsPage() {
               <div className="h-2 overflow-hidden rounded-full bg-muted">
                 <div className="h-full bg-primary transition-all" style={{ width: `${Math.round(updateStatus.progress.percent || 0)}%` }} />
               </div>
-              <p className="text-xs text-muted-foreground">下载进度 {Math.round(updateStatus.progress.percent || 0)}%</p>
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
@@ -421,6 +551,96 @@ export function SettingsPage() {
               <strong>隐私提示：</strong>笔记往往含更敏感业务信息。commit 与笔记一并受脱敏规则约束，可指向私有网关实现数据不出内网。
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Codex hook 小记 */}
+      <Card className="border-l-4 border-l-fuchsia-500">
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle>Codex Hook 小记</CardTitle>
+          <Badge variant={codexHookStatus?.running ? 'success' : draft.codexHook.enabled ? 'destructive' : 'secondary'}>
+            {codexHookStatus?.running ? '运行中' : draft.codexHook.enabled ? '未运行' : '未启用'}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between gap-3 py-2">
+            <div>
+              <h4 className="text-sm font-semibold">允许 Codex 写入待处理小记池</h4>
+              <p className="text-xs text-muted-foreground">开启后只接受本机 loopback + token 请求，内容先进入待处理池。</p>
+            </div>
+            <Switch
+              checked={draft.codexHook.enabled}
+              onCheckedChange={(v) => patch((c) => { c.codexHook.enabled = v })}
+            />
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <div className="min-w-[140px] space-y-1.5">
+              <Label>本地端口</Label>
+              <Input
+                type="number"
+                min={1024}
+                max={65535}
+                value={draft.codexHook.port}
+                onChange={(e) => patch((c) => { c.codexHook.port = Number(e.target.value) || 17321 })}
+              />
+            </div>
+            <div className="min-w-[260px] flex-1 space-y-1.5">
+              <Label>接口地址</Label>
+              <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                {codexHookStatus?.endpoint || `http://127.0.0.1:${draft.codexHook.port}/api/codex/pending-notes`}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <div className="min-w-[160px] space-y-1.5">
+              <Label>Codex Hook</Label>
+              <Badge variant={codexHookStatus?.hookInstalled ? 'success' : 'secondary'}>
+                {codexHookStatus?.hookInstalled ? `已安装${codexHookStatus.hookCount > 1 ? ` × ${codexHookStatus.hookCount}` : ''}` : '未安装'}
+              </Badge>
+            </div>
+            <div className="min-w-[260px] flex-1 space-y-1.5">
+              <Label>配置文件</Label>
+              <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                {codexHookStatus?.hooksPath || '~/.codex/hooks.json'}
+              </p>
+            </div>
+          </div>
+          {codexHookStatus?.error && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+              {codexHookStatus.error}
+            </div>
+          )}
+          {codexHookStatus?.hookError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+              {codexHookStatus.hookError}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" onClick={installCodexHook} disabled={installingCodexHook}>
+              {installingCodexHook ? <RefreshCw className="animate-spin" /> : <Zap />}
+              一键安装 Hook
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={uninstallCodexHook}
+              disabled={uninstallingCodexHook || !codexHookStatus?.hookInstalled}
+            >
+              {uninstallingCodexHook ? <RefreshCw className="animate-spin" /> : <Trash2 />}
+              一键卸载 Hook
+            </Button>
+            <Button type="button" variant="outline" onClick={copyCodexHookConfig} disabled={!draft.codexHook.enabled || copyingCodexHookConfig}>
+              {copyingCodexHookConfig ? <RefreshCw className="animate-spin" /> : <Copy />}
+              复制 Codex 配置片段
+            </Button>
+            <Button type="button" variant="ghost" onClick={refreshCodexHookStatus}>
+              <RefreshCw />
+              刷新状态
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Token 仅保存在本机密钥存储中，不在界面展示明文。一键安装会把 token 写入本机 Codex hooks.json；复制配置片段会把 token 写入剪贴板。
+          </p>
         </CardContent>
       </Card>
 
@@ -627,6 +847,25 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
+      {/* 本地备份 */}
+      <Card className="border-l-4 border-l-emerald-500">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Download className="size-4" />本地备份</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <h4 className="text-sm font-semibold">下载备份到本机</h4>
+              <p className="text-xs text-muted-foreground">生成包含笔记、报告历史、AI 记忆和配置偏好的 zip 文件，保存到系统下载目录</p>
+            </div>
+            <Button type="button" variant="outline" onClick={createLocalBackup} disabled={creatingLocalBackup}>
+              {creatingLocalBackup ? <RefreshCw className="animate-spin" /> : <Download />}
+              下载备份
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* 云同步 WebDAV */}
       <Card className="border-l-4 border-l-sky-500">
         <CardHeader>
@@ -643,89 +882,158 @@ export function SettingsPage() {
               onCheckedChange={(v) => patch((c) => { c.webdav.enabled = v })}
             />
           </div>
-          <div className="flex flex-wrap gap-4">
-            <div className="flex-[2] space-y-1.5">
-              <Label>WebDAV 服务器 URL</Label>
-              <Input
-                value={draft.webdav.url}
-                onChange={(e) => patch((c) => { c.webdav.url = e.target.value })}
-                placeholder="https://dav.example.com/weeklog/"
-                disabled={!draft.webdav.enabled}
-              />
-            </div>
-            <div className="flex-1 space-y-1.5">
-              <Label>用户名</Label>
-              <Input
-                value={draft.webdav.username}
-                onChange={(e) => patch((c) => { c.webdav.username = e.target.value })}
-                disabled={!draft.webdav.enabled}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>密码（加密存储，不落配置文件）</Label>
-            <div className="flex gap-2">
-              <Input
-                type={showWebdavPass ? 'text' : 'password'}
-                value={webdavPassword}
-                onChange={(e) => setWebdavPassword(e.target.value)}
-                placeholder={hasStoredWebdavPassword ? '已保存；输入新密码可替换' : '••••••'}
-                autoComplete="off"
-                disabled={!draft.webdav.enabled}
-                className="flex-1"
-              />
-              <Button variant="outline" type="button" onClick={() => setShowWebdavPass((s) => !s)} disabled={!draft.webdav.enabled}>
-                {showWebdavPass ? <EyeOff /> : <Eye />}
-                {showWebdavPass ? '隐藏' : '显示'}
-              </Button>
-              <Button variant="outline" type="button" onClick={testWebdav} disabled={!draft.webdav.enabled || testingWebdav || !draft.webdav.url}>
-                {testingWebdav ? <RefreshCw className="animate-spin" /> : <Zap />}
-                测试
-              </Button>
-              <Button variant="outline" type="button" onClick={clearWebdavPassword} disabled={!draft.webdav.enabled || !hasStoredWebdavPassword}>
-                <Trash2 />
-                清除
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {webdavPassword ? '✓ 已输入新密码，保存后生效' : hasStoredWebdavPassword ? '✓ 已保存密码（不回显明文）' : '未保存密码'}
-            </p>
-          </div>
-          <Separator />
-          <div className="space-y-1.5">
-            <Label>自动同步时机</Label>
-            <Select
-              value={draft.webdav.autoSync}
-              onValueChange={(v) => patch((c) => { c.webdav.autoSync = v as Config['webdav']['autoSync'] })}
-              disabled={!draft.webdav.enabled}
-            >
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="both">启动拉取 + 退出推送（推荐）</SelectItem>
-                <SelectItem value="pull">仅启动拉取</SelectItem>
-                <SelectItem value="push">仅退出推送</SelectItem>
-                <SelectItem value="off">关闭自动同步（仅手动）</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="default" type="button" onClick={() => syncNow('both')} disabled={!draft.webdav.enabled || syncingWebdav}>
-              {syncingWebdav ? <RefreshCw className="animate-spin" /> : <RefreshCw />}
-              立即同步（双向）
-            </Button>
-            <Button variant="outline" type="button" onClick={() => syncNow('pull')} disabled={!draft.webdav.enabled || syncingWebdav}>
-              仅拉取
-            </Button>
-            <Button variant="outline" type="button" onClick={() => syncNow('push')} disabled={!draft.webdav.enabled || syncingWebdav}>
-              仅推送
-            </Button>
-            {webdavStatus?.lastSync && (
-              <span className="text-xs text-muted-foreground">
-                最近同步：{new Date(webdavStatus.lastSync).toLocaleString()}
-                {typeof webdavStatus.pulled === 'number' && `（拉取 ${webdavStatus.pulled}，推送 ${webdavStatus.pushed}）`}
-              </span>
-            )}
-          </div>
+          {draft.webdav.enabled && (
+            <>
+              <div className="flex flex-wrap gap-4">
+                <div className="flex-[2] space-y-1.5">
+                  <Label>WebDAV 服务器 URL</Label>
+                  <Input
+                    value={draft.webdav.url}
+                    onChange={(e) => patch((c) => { c.webdav.url = e.target.value })}
+                    placeholder="https://dav.example.com/weeklog/"
+                  />
+                </div>
+                <div className="flex-1 space-y-1.5">
+                  <Label>用户名</Label>
+                  <Input
+                    value={draft.webdav.username}
+                    onChange={(e) => patch((c) => { c.webdav.username = e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>密码（加密存储，不落配置文件）</Label>
+                <div className="flex gap-2">
+                  <Input
+                    type={showWebdavPass ? 'text' : 'password'}
+                    value={webdavPassword}
+                    onChange={(e) => setWebdavPassword(e.target.value)}
+                    placeholder={hasStoredWebdavPassword ? '已保存；输入新密码可替换' : '••••••'}
+                    autoComplete="off"
+                    className="flex-1"
+                  />
+                  <Button variant="outline" type="button" onClick={() => setShowWebdavPass((s) => !s)}>
+                    {showWebdavPass ? <EyeOff /> : <Eye />}
+                    {showWebdavPass ? '隐藏' : '显示'}
+                  </Button>
+                  <Button variant="outline" type="button" onClick={testWebdav} disabled={testingWebdav || !draft.webdav.url}>
+                    {testingWebdav ? <RefreshCw className="animate-spin" /> : <Zap />}
+                    测试
+                  </Button>
+                  <Button variant="outline" type="button" onClick={clearWebdavPassword} disabled={!hasStoredWebdavPassword}>
+                    <Trash2 />
+                    清除
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {webdavPassword ? '✓ 已输入新密码，保存后生效' : hasStoredWebdavPassword ? '✓ 已保存密码（不回显明文）' : '未保存密码'}
+                </p>
+              </div>
+              <Separator />
+              <div className="grid gap-4 md:grid-cols-[1fr_180px]">
+                <div className="space-y-1.5">
+                  <Label>自动备份</Label>
+                  <Select
+                    value={draft.webdav.autoSync === 'off' ? 'off' : 'push'}
+                    onValueChange={(v) => patch((c) => { c.webdav.autoSync = v as Config['webdav']['autoSync'] })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="push">退出时自动备份</SelectItem>
+                      <SelectItem value="off">关闭自动备份（仅手动）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>保留备份数</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={draft.webdav.backupRetention ?? 10}
+                    onChange={(e) => patch((c) => { c.webdav.backupRetention = Math.max(1, Number(e.target.value) || 10) })}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="default" type="button" onClick={backupNow} disabled={webdavBusy}>
+                  {webdavBusy ? <RefreshCw className="animate-spin" /> : <Download />}
+                  立即备份
+                </Button>
+                <Button variant="outline" type="button" onClick={openBackupDialog} disabled={webdavBusy}>
+                  <ArchiveRestore />
+                  恢复备份
+                </Button>
+                {webdavStatus?.lastBackup && (
+                  <span className="text-xs text-muted-foreground">
+                    最近备份：{new Date(webdavStatus.lastBackup).toLocaleString()}
+                  </span>
+                )}
+                {webdavStatus?.lastRestore && (
+                  <span className="text-xs text-muted-foreground">
+                    最近恢复：{new Date(webdavStatus.lastRestore).toLocaleString()}
+                  </span>
+                )}
+              </div>
+              <Dialog open={backupDialogOpen} onOpenChange={setBackupDialogOpen}>
+                <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>选择备份文件</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm text-muted-foreground">选择一个远端压缩备份恢复到本机。</p>
+                      <Button variant="outline" size="sm" type="button" onClick={loadBackups} disabled={loadingBackups}>
+                        <RefreshCw className={cn('size-3', loadingBackups && 'animate-spin')} />
+                        刷新
+                      </Button>
+                    </div>
+                    {backups.length === 0 ? (
+                      <div className="rounded-md border p-8 text-center text-sm text-muted-foreground">
+                        {loadingBackups ? '正在读取备份列表…' : '暂无远端备份'}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {backups.map((item) => (
+                          <label
+                            key={item.name}
+                            className={cn(
+                              'flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors hover:bg-muted/50',
+                              selectedBackup === item.name && 'border-primary bg-primary/5'
+                            )}
+                          >
+                            <input
+                              type="radio"
+                              className="mt-1"
+                              checked={selectedBackup === item.name}
+                              onChange={() => setSelectedBackup(item.name)}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="truncate font-mono text-xs font-medium">{item.name}</span>
+                                {item.deviceName && <Badge variant="secondary">{item.deviceName}</Badge>}
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {(item.createdAt || item.lastModified) ? new Date(item.createdAt || item.lastModified).toLocaleString() : '未知时间'}
+                                {item.size ? ` · ${(item.size / 1024).toFixed(1)} KB` : ''}
+                              </p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" type="button" onClick={() => setBackupDialogOpen(false)}>取消</Button>
+                      <Button type="button" onClick={restoreBackup} disabled={!selectedBackup || webdavBusy}>
+                        {webdavBusy ? <RefreshCw className="animate-spin" /> : <ArchiveRestore />}
+                        恢复备份
+                      </Button>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -735,82 +1043,6 @@ export function SettingsPage() {
           <CardTitle className="flex items-center gap-2"><Brain className="size-4" />AI 记忆系统</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* 模型与向量化状态摘要 */}
-          <div className="rounded-md border bg-muted/30 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">运行状态</span>
-              <Button variant="ghost" size="sm" type="button" onClick={refreshMemStatus} className="h-6 px-2 text-xs">
-                <RefreshCw className="size-3" />
-                刷新
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {/* 模型状态 */}
-              <div className="flex items-start gap-2">
-                {memStatus ? (
-                  memStatus.source === 'local' ? (
-                    memStatus.modelReady ? (
-                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
-                    ) : (
-                      <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-500" />
-                    )
-                  ) : (
-                    <Cpu className="mt-0.5 size-4 shrink-0 text-sky-500" />
-                  )
-                ) : (
-                  <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
-                )}
-                <div className="min-w-0 space-y-0.5">
-                  <p className="text-xs font-medium text-foreground">
-                    {memStatus ? (memStatus.source === 'local' ? '本地模型' : 'API 模型') : '模型状态'}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {memStatus ? (
-                      memStatus.source === 'local' ? (
-                        memStatus.modelReady
-                          ? `✓ 已就绪 · ${memStatus.modelSizeMB}MB`
-                          : '⚠ 未下载（首次生成报告后自动下载）'
-                      ) : (
-                        `OpenAI Embedding · ${memStatus.model.replace('Xenova/', '')}`
-                      )
-                    ) : '读取中…'}
-                  </p>
-                  {memStatus && (
-                    <p className="truncate text-[11px] text-muted-foreground/70" title={memStatus.model}>
-                      {memStatus.model}
-                    </p>
-                  )}
-                </div>
-              </div>
-              {/* 向量化进度 */}
-              <div className="flex items-start gap-2">
-                <Activity className="mt-0.5 size-4 shrink-0 text-violet-500" />
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  <p className="text-xs font-medium text-foreground">向量化进度</p>
-                  {memStatus ? (
-                    memStatus.total > 0 ? (
-                      <>
-                        <p className="text-xs text-muted-foreground">
-                          {memStatus.embedded}/{memStatus.total} 条已完成
-                          {memStatus.dim > 0 && ` · ${memStatus.dim} 维`}
-                        </p>
-                        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className="h-full bg-violet-500 transition-all"
-                            style={{ width: `${Math.round((memStatus.embedded / memStatus.total) * 100)}%` }}
-                          />
-                        </div>
-                      </>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">暂无记忆，生成报告后自动积累</p>
-                    )
-                  ) : (
-                    <p className="text-xs text-muted-foreground">读取中…</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
           <div className="flex items-center justify-between py-2">
             <div>
               <h4 className="text-sm font-semibold">启用 AI 记忆</h4>
@@ -821,140 +1053,216 @@ export function SettingsPage() {
               onCheckedChange={(v) => patch((c) => { c.memory.enabled = v })}
             />
           </div>
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <h4 className="text-sm font-semibold">报告生成后自动产出记忆</h4>
-              <p className="text-xs text-muted-foreground">每次生成报告后，AI 自动压缩为一条长期记忆</p>
-            </div>
-            <Switch
-              checked={draft.memory.autoGenerate}
-              onCheckedChange={(v) => patch((c) => { c.memory.autoGenerate = v })}
-              disabled={!draft.memory.enabled}
-            />
-          </div>
-          <div className="flex flex-wrap gap-4">
-            <div className="min-w-[200px] space-y-1.5">
-              <Label>Embedding 来源</Label>
-              <Select
-                value={draft.memory.embeddingSource}
-                onValueChange={(v) => patch((c) => { c.memory.embeddingSource = v as Config['memory']['embeddingSource'] })}
-                disabled={!draft.memory.enabled}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="local">本地模型（推荐，离线、隐私）</SelectItem>
-                  <SelectItem value="api">API（OpenAI embedding）</SelectItem>
-                </SelectContent>
-              </Select>
-              {draft.memory.embeddingSource === 'local' && (
-                <p className="text-xs text-muted-foreground">首次使用需下载约 120MB 模型，之后离线缓存</p>
-              )}
-            </div>
-            {draft.memory.embeddingSource === 'local' && (
-              <div className="min-w-[200px] space-y-1.5">
-                <Label>模型下载源</Label>
-                <Select
-                  value={draft.memory.modelSource}
-                  onValueChange={(v) => patch((c) => { c.memory.modelSource = v as Config['memory']['modelSource'] })}
-                  disabled={!draft.memory.enabled}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">自动（探测魔搭，不通则回退 HF）</SelectItem>
-                  <SelectItem value="modelscope">魔搭 ModelScope（国内更快）</SelectItem>
-                  <SelectItem value="huggingface">HuggingFace（国外）</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">国内网络建议用魔搭或自动；首次下载约 120MB</p>
+          {draft.memory.enabled && (
+            <>
+              {/* 模型与向量化状态摘要 */}
+              <div className="rounded-md border bg-muted/30 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">运行状态</span>
+                  <Button variant="ghost" size="sm" type="button" onClick={refreshMemStatus} className="h-6 px-2 text-xs">
+                    <RefreshCw className="size-3" />
+                    刷新
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {/* 模型状态 */}
+                  <div className="flex items-start gap-2">
+                    {memStatus ? (
+                      memStatus.source === 'local' ? (
+                        memStatus.modelReady ? (
+                          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+                        ) : (
+                          <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+                        )
+                      ) : (
+                        <Cpu className="mt-0.5 size-4 shrink-0 text-sky-500" />
+                      )
+                    ) : (
+                      <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
+                    )}
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-xs font-medium text-foreground">
+                        {memStatus ? (memStatus.source === 'local' ? '本地模型' : 'API 模型') : '模型状态'}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {memStatus ? (
+                          memStatus.source === 'local' ? (
+                            memStatus.modelReady
+                              ? `✓ 已就绪 · ${memStatus.modelSizeMB}MB`
+                              : '⚠ 未下载（首次生成报告后自动下载）'
+                          ) : (
+                            `OpenAI Embedding · ${memStatus.model.replace('Xenova/', '')}`
+                          )
+                        ) : '读取中…'}
+                      </p>
+                      {memStatus && (
+                        <p className="truncate text-[11px] text-muted-foreground/70" title={memStatus.model}>
+                          {memStatus.model}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {/* 向量化进度 */}
+                  <div className="flex items-start gap-2">
+                    <Activity className="mt-0.5 size-4 shrink-0 text-violet-500" />
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <p className="text-xs font-medium text-foreground">向量化进度</p>
+                      {memStatus ? (
+                        memStatus.total > 0 ? (
+                          <>
+                            <p className="text-xs text-muted-foreground">
+                              {memStatus.embedded}/{memStatus.total} 条已完成
+                              {memStatus.dim > 0 && ` · ${memStatus.dim} 维`}
+                            </p>
+                            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                              <div
+                                className="h-full bg-violet-500 transition-all"
+                                style={{ width: `${Math.round((memStatus.embedded / memStatus.total) * 100)}%` }}
+                              />
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">暂无记忆，生成报告后自动积累</p>
+                        )
+                      ) : (
+                        <p className="text-xs text-muted-foreground">读取中…</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
-            )}
-            <div className="min-w-[200px] space-y-1.5">
-              <Label>本地 Embedding 模型</Label>
-              <Input
-                value={draft.memory.embeddingModel}
-                onChange={(e) => patch((c) => { c.memory.embeddingModel = e.target.value })}
-                disabled={!draft.memory.enabled || draft.memory.embeddingSource !== 'local'}
-                placeholder="Xenova/multilingual-e5-small"
-              />
-            </div>
-            <div className="min-w-[120px] space-y-1.5">
-              <Label>检索条数 (topK)</Label>
-              <Input
-                type="number"
-                min={1}
-                max={20}
-                value={draft.memory.topK}
-                onChange={(e) => patch((c) => { c.memory.topK = Number(e.target.value) || 5 })}
-                disabled={!draft.memory.enabled}
-              />
-            </div>
-          </div>
-          <Separator />
-          <div className="flex flex-wrap items-center gap-2">
-            <Dialog open={memDialogOpen} onOpenChange={setMemDialogOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" type="button" disabled={!draft.memory.enabled}>
-                  <Database />
-                  查看记忆 ({memList.length || '…'})
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>AI 记忆库</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-2">
-                  {memQueue && memQueue.pending > 0 && (
-                    <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                      <Loader2 className="size-3 animate-spin" />
-                      {memQueue.pending} 条记忆正在后台计算向量…
-                    </p>
-                  )}
-                  {memList.length === 0 ? (
-                    <p className="py-8 text-center text-sm text-muted-foreground">暂无记忆条目。生成报告后会自动积累。</p>
-                  ) : (
-                    memList.map((m) => (
-                      <div key={m.id} className="rounded-md border p-3">
-                        <div className="mb-1 flex items-center justify-between">
-                          <span className="text-sm font-semibold">{m.project || '未分类'}</span>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary" className="text-xs">{m.date}</Badge>
-                            {!m.embeddingReady && <Badge variant="outline" className="text-xs">向量待算</Badge>}
-                            <Button variant="ghost" size="sm" type="button" onClick={() => removeMemory(m.id)}>
-                              <Trash2 className="size-3" />
-                            </Button>
-                          </div>
-                        </div>
-                        <p className="text-sm text-foreground/80">{m.digest}</p>
-                        {m.keywords.length > 0 && (
-                          <div className="mt-1.5 flex flex-wrap gap-1">
-                            {m.keywords.slice(0, 8).map((k, i) => (
-                              <Badge key={i} variant="outline" className="text-xs">{k}</Badge>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <h4 className="text-sm font-semibold">报告生成后自动产出记忆</h4>
+                  <p className="text-xs text-muted-foreground">每次生成报告后，AI 自动压缩为一条长期记忆</p>
+                </div>
+                <Switch
+                  checked={draft.memory.autoGenerate}
+                  onCheckedChange={(v) => patch((c) => { c.memory.autoGenerate = v })}
+                />
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <div className="min-w-[200px] space-y-1.5">
+                  <Label>Embedding 来源</Label>
+                  <Select
+                    value={draft.memory.embeddingSource}
+                    onValueChange={(v) => patch((c) => { c.memory.embeddingSource = v as Config['memory']['embeddingSource'] })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="local">本地模型（推荐，离线、隐私）</SelectItem>
+                      <SelectItem value="api">API（OpenAI embedding）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {draft.memory.embeddingSource === 'local' && (
+                    <p className="text-xs text-muted-foreground">首次使用需下载约 120MB 模型，之后离线缓存</p>
                   )}
                 </div>
-              </DialogContent>
-            </Dialog>
-            <Button
-              variant="outline"
-              type="button"
-              onClick={() => {
-                if (confirm('将根据全部历史报告重新生成记忆（会调用 AI，耗时较长）。确定继续？')) rebuildMemory()
-              }}
-              disabled={!draft.memory.enabled || rebuildingMem}
-            >
-              {rebuildingMem ? <RefreshCw className="animate-spin" /> : <RefreshCw />}
-              重建记忆
-            </Button>
-          </div>
+                {draft.memory.embeddingSource === 'local' && (
+                  <div className="min-w-[200px] space-y-1.5">
+                    <Label>模型下载源</Label>
+                    <Select
+                      value={draft.memory.modelSource}
+                      onValueChange={(v) => patch((c) => { c.memory.modelSource = v as Config['memory']['modelSource'] })}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">自动（探测魔搭，不通则回退 HF）</SelectItem>
+                      <SelectItem value="modelscope">魔搭 ModelScope（国内更快）</SelectItem>
+                      <SelectItem value="huggingface">HuggingFace（国外）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">国内网络建议用魔搭或自动；首次下载约 120MB</p>
+                  </div>
+                )}
+                <div className="min-w-[200px] space-y-1.5">
+                  <Label>本地 Embedding 模型</Label>
+                  <Input
+                    value={draft.memory.embeddingModel}
+                    onChange={(e) => patch((c) => { c.memory.embeddingModel = e.target.value })}
+                    disabled={draft.memory.embeddingSource !== 'local'}
+                    placeholder="Xenova/multilingual-e5-small"
+                  />
+                </div>
+                <div className="min-w-[120px] space-y-1.5">
+                  <Label>检索条数 (topK)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={draft.memory.topK}
+                    onChange={(e) => patch((c) => { c.memory.topK = Number(e.target.value) || 5 })}
+                  />
+                </div>
+              </div>
+              <Separator />
+              <div className="flex flex-wrap items-center gap-2">
+                <Dialog open={memDialogOpen} onOpenChange={setMemDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" type="button">
+                      <Database />
+                      查看记忆 ({memList.length || '…'})
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>AI 记忆库</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-2">
+                      {memQueue && memQueue.pending > 0 && (
+                        <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                          <Loader2 className="size-3 animate-spin" />
+                          {memQueue.pending} 条记忆正在后台计算向量…
+                        </p>
+                      )}
+                      {memList.length === 0 ? (
+                        <p className="py-8 text-center text-sm text-muted-foreground">暂无记忆条目。生成报告后会自动积累。</p>
+                      ) : (
+                        memList.map((m) => (
+                          <div key={m.id} className="rounded-md border p-3">
+                            <div className="mb-1 flex items-center justify-between">
+                              <span className="text-sm font-semibold">{m.project || '未分类'}</span>
+                              <div className="flex items-center gap-2">
+                                <Badge variant="secondary" className="text-xs">{m.date}</Badge>
+                                {!m.embeddingReady && <Badge variant="outline" className="text-xs">向量待算</Badge>}
+                                <Button variant="ghost" size="sm" type="button" onClick={() => removeMemory(m.id)}>
+                                  <Trash2 className="size-3" />
+                                </Button>
+                              </div>
+                            </div>
+                            <p className="text-sm text-foreground/80">{m.digest}</p>
+                            {m.keywords.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {m.keywords.slice(0, 8).map((k, i) => (
+                                  <Badge key={i} variant="outline" className="text-xs">{k}</Badge>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </DialogContent>
+                </Dialog>
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => {
+                    if (confirm('将根据全部历史报告重新生成记忆（会调用 AI，耗时较长）。确定继续？')) rebuildMemory()
+                  }}
+                  disabled={rebuildingMem}
+                >
+                  {rebuildingMem ? <RefreshCw className="animate-spin" /> : <RefreshCw />}
+                  重建记忆
+                </Button>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 
-      <div className="flex items-center gap-4">
-        <Button onClick={handleSave}>
+      <div className="fixed bottom-12 right-8 z-30">
+        <Button onClick={handleSave} className="shadow-sm">
           <Save />
           保存设置
         </Button>

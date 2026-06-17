@@ -27,6 +27,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Setup pnpm
         # package.json 已声明 packageManager: pnpm@11.6.0，无需指定 version
@@ -42,12 +45,29 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate release notes
+        shell: bash
+        run: |
+          current_tag="${GITHUB_REF_NAME}"
+          previous_tag="$(git tag --sort=-v:refname | grep -v "^${current_tag}$" | head -n 1 || true)"
+
+          {
+            echo "## 更新内容"
+            echo
+            if [ -n "$previous_tag" ]; then
+              git log --pretty=format:'- %s (%h)' "${previous_tag}..${current_tag}" --no-merges
+              echo
+              echo
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${current_tag}"
+            else
+              git log --pretty=format:'- %s (%h)' "${current_tag}" --no-merges
+            fi
+          } > RELEASE_NOTES.md
+
       - name: Build & package app
         # dist:win / dist:mac 脚本已内含 build:renderer（Vite 打包渲染层）
+        # 只打包，不让 electron-builder 创建 GitHub Release；上传统一交给下方 action-gh-release
         run: pnpm run ${{ matrix.dist_script }}
-        env:
-          # electron-builder 自动更新元信息（latest*.yml）需要；此处仅打包
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts to workflow
         uses: actions/upload-artifact@v7
@@ -70,3 +90,4 @@ jobs:
             release/*-mac.zip
             release/latest*.yml
           fail_on_unmatched_files: false
+          body_path: RELEASE_NOTES.md

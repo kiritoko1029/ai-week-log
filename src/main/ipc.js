@@ -6,6 +6,7 @@
 const { ipcMain, dialog, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const crypto = require('crypto')
 const {
   loadConfig,
   saveConfig,
@@ -17,13 +18,17 @@ const {
 const { checkGit, isGitRepo, currentBranch, scanGitRepos } = require('./git')
 const { testProvider } = require('./llm')
 const notes = require('./notes')
+const codexPendingNotes = require('./codex-pending-notes')
+const codexHookConfig = require('./codex-hook-config')
 const secrets = require('./secrets')
 const { collect, generate } = require('./pipeline')
 const { isoDate } = require('./utils')
 const webdav = require('./webdav')
+const localBackup = require('./local-backup')
 const memory = require('./memory')
 const chat = require('./chat')
 const tasks = require('./tasks')
+const { createLogger, listLogs, clearLogs, logPath } = require('./logger')
 
 const HISTORY_FILE = 'history.json'
 const SECRET_PROVIDERS = new Set(['openai', 'anthropic', 'webdav'])
@@ -68,11 +73,14 @@ function normalizeSecretProvider(provider, fallback) {
   return SECRET_PROVIDERS.has(p) ? p : fallback
 }
 
-function registerIpc({ app, getMainWindow, updater }) {
+function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
   const userDataDir = app.getPath('userData')
+  const logger = createLogger(userDataDir)
   const getConfig = () => loadConfig(userDataDir)
   const persist = (cfg) => {
-    saveConfig(userDataDir, mergeConfig(defaultConfig(), cfg))
+    const next = mergeConfig(defaultConfig(), cfg)
+    saveConfig(userDataDir, next)
+    if (next.codexHook && next.codexHook.enabled) ensureCodexHookToken()
     return getConfig()
   }
   const getNotesDir = () => {
@@ -136,8 +144,16 @@ function registerIpc({ app, getMainWindow, updater }) {
 
   // ── 配置 ──
   ipcMain.handle('config:get', () => getConfig())
-  ipcMain.handle('config:save', (_e, cfg) => persist(cfg))
-  ipcMain.handle('config:reset', () => persist(defaultConfig()))
+  ipcMain.handle('config:save', async (_e, cfg) => {
+    const saved = persist(cfg)
+    if (codexHookServer && typeof codexHookServer.applyConfig === 'function') await codexHookServer.applyConfig()
+    return saved
+  })
+  ipcMain.handle('config:reset', async () => {
+    const saved = persist(defaultConfig())
+    if (codexHookServer && typeof codexHookServer.applyConfig === 'function') await codexHookServer.applyConfig()
+    return saved
+  })
   ipcMain.handle('config:notesDir', () => getNotesDir())
 
   // ── 环境 ──
@@ -232,6 +248,118 @@ function registerIpc({ app, getMainWindow, updater }) {
     return notes.loadNotes(getNotesDir(), from, to, cfg.notes.miscProject)
   })
 
+  // ── Codex hook 待处理小记 ──
+  function ensureCodexHookToken() {
+    let token = secrets.getKey(userDataDir, 'codexHook')
+    if (!token) {
+      token = crypto.randomBytes(32).toString('hex')
+      secrets.setKey(userDataDir, 'codexHook', token)
+    }
+    return token
+  }
+
+  function codexHookEndpoint() {
+    const cfg = getConfig()
+    const status = codexHookServer && typeof codexHookServer.status === 'function'
+      ? codexHookServer.status()
+      : { running: false, host: '127.0.0.1', port: cfg.codexHook && cfg.codexHook.port, error: '服务未初始化' }
+    const port = status.port || (cfg.codexHook && cfg.codexHook.port) || 17321
+    return `http://127.0.0.1:${port}/api/codex/pending-notes`
+  }
+
+  async function prepareCodexHookIntegration() {
+    const token = ensureCodexHookToken()
+    if (codexHookServer && typeof codexHookServer.applyConfig === 'function') {
+      await codexHookServer.applyConfig()
+    }
+    const endpoint = codexHookEndpoint()
+    const hook = codexHookConfig.buildCodexPendingNoteHook({ endpoint, token })
+    return { endpoint, hook }
+  }
+
+  function codexHookInstallStatus() {
+    return codexHookConfig.getCodexHookInstallStatus({ hooksPath: codexHookConfig.defaultHooksPath() })
+  }
+
+  ipcMain.handle('codexNotes:list', () => codexPendingNotes.listPendingNotes(userDataDir))
+  ipcMain.handle('codexNotes:delete', (_e, { ids } = {}) => codexPendingNotes.deletePendingNotes(userDataDir, ids || []))
+  ipcMain.handle('codexNotes:write', (_e, { ids, project, content } = {}) => {
+    const cfg = getConfig()
+    return codexPendingNotes.writePendingNotes(userDataDir, {
+      ids: ids || [],
+      notesDir: getNotesDir(),
+      miscProject: cfg.notes.miscProject,
+      project,
+      content,
+    })
+  })
+  ipcMain.handle('codexNotes:summarize', async (_e, { ids } = {}) => {
+    const cfg = getConfig()
+    const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
+    if (!has) return { error: '未配置 AI API Key' }
+    const provider = require('./llm').createProvider(cfg, key)
+    return codexPendingNotes.summarizePendingNotes(userDataDir, { ids: ids || [], provider })
+  })
+  ipcMain.handle('codexHook:status', () => {
+    const cfg = getConfig()
+    const status = codexHookServer && typeof codexHookServer.status === 'function'
+      ? codexHookServer.status()
+      : { running: false, host: '127.0.0.1', port: 0, error: '服务未初始化' }
+    const installStatus = codexHookInstallStatus()
+    return {
+      enabled: !!(cfg.codexHook && cfg.codexHook.enabled),
+      hasToken: secrets.hasKey(userDataDir, 'codexHook'),
+      endpoint: codexHookEndpoint(),
+      hookInstalled: installStatus.installed,
+      hookCount: installStatus.hookCount,
+      hooksPath: installStatus.hooksPath,
+      hookError: installStatus.error,
+      ...status,
+    }
+  })
+  ipcMain.handle('codexHook:copyConfig', async () => {
+    const cfg = getConfig()
+    const token = ensureCodexHookToken()
+    if (codexHookServer && typeof codexHookServer.applyConfig === 'function') {
+      await codexHookServer.applyConfig()
+    }
+    const endpoint = codexHookEndpoint()
+    const text = codexHookConfig.buildCodexHookSnippet({ endpoint, token })
+    return {
+      enabled: !!(cfg.codexHook && cfg.codexHook.enabled),
+      endpoint,
+      text,
+    }
+  })
+  ipcMain.handle('codexHook:install', async () => {
+    const cfg = getConfig()
+    if (!(cfg.codexHook && cfg.codexHook.enabled)) {
+      cfg.codexHook = cfg.codexHook || {}
+      cfg.codexHook.enabled = true
+      persist(cfg)
+      if (codexHookServer && typeof codexHookServer.applyConfig === 'function') {
+        await codexHookServer.applyConfig()
+      }
+    }
+    const { endpoint, hook } = await prepareCodexHookIntegration()
+    const result = codexHookConfig.installCodexHook({
+      hooksPath: codexHookConfig.defaultHooksPath(),
+      hook,
+    })
+    return {
+      ...result,
+      endpoint,
+      status: codexHookInstallStatus(),
+    }
+  })
+  ipcMain.handle('codexHook:uninstall', () => {
+    const result = codexHookConfig.uninstallCodexHook({ hooksPath: codexHookConfig.defaultHooksPath() })
+    return {
+      ...result,
+      status: codexHookInstallStatus(),
+    }
+  })
+
   // ── 采集 / 生成 ──
   ipcMain.handle('collect', (_e, { rangeOpts, options }) =>
     collect({ cfg: getConfig(), rangeOpts: rangeOpts || {}, notesDir: getNotesDir(), options: options || {} })
@@ -312,6 +440,14 @@ function registerIpc({ app, getMainWindow, updater }) {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
     return r.canceled ? null : r.filePaths[0]
   })
+  ipcMain.handle('dialog:pickBackupFolder', async () => {
+    const win = getMainWindow()
+    const r = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: app.getPath('downloads'),
+    })
+    return r.canceled ? null : r.filePaths[0]
+  })
   // 在系统默认浏览器打开外链（仅放行 http/https，防 XSS）
   ipcMain.handle('shell:openExternal', (_e, url) => {
     if (typeof url !== 'string') return
@@ -323,7 +459,7 @@ function registerIpc({ app, getMainWindow, updater }) {
 
   // ── WebDAV 同步 ──
   ipcMain.handle('webdav:test', async (_e, { url, username, password }) => {
-    return webdav.testConnection({ url, username, password: password || secrets.getKey(userDataDir, 'webdav') })
+    return webdav.testConnection({ url, username, password: password || secrets.getKey(userDataDir, 'webdav'), logger })
   })
   ipcMain.handle('webdav:syncNow', async (_e, { direction } = {}) => {
     const cfg = getConfig()
@@ -335,11 +471,48 @@ function registerIpc({ app, getMainWindow, updater }) {
       progress: { done: 0, total: 0, label: dirLabel },
     })
     try {
-      const result = await webdav.syncAll({ cfg, dir: userDataDir, password, direction: dir })
+      const result = await webdav.syncAll({ cfg, dir: userDataDir, password, direction: dir, logger })
       tasks.done(taskId, { pulled: result.pulled, pushed: result.pushed })
       return result
     } catch (e) {
       tasks.error(taskId, e.message || '同步失败')
+      throw e
+    }
+  })
+  ipcMain.handle('webdav:backupNow', async () => {
+    const cfg = getConfig()
+    const password = secrets.getKey(userDataDir, 'webdav')
+    const taskId = tasks.create('webdav', 'WebDAV 备份', {
+      detail: '正在创建远端备份…',
+      progress: { done: 0, total: 0, label: '备份' },
+    })
+    try {
+      const result = await webdav.createBackup({ cfg, dir: userDataDir, password, appVersion: app.getVersion(), logger })
+      tasks.done(taskId, result)
+      return result
+    } catch (e) {
+      tasks.error(taskId, e.message || '备份失败')
+      throw e
+    }
+  })
+  ipcMain.handle('webdav:listBackups', async () => {
+    const cfg = getConfig()
+    const password = secrets.getKey(userDataDir, 'webdav')
+    return webdav.listBackups({ cfg, password, logger })
+  })
+  ipcMain.handle('webdav:restoreBackup', async (_e, { name } = {}) => {
+    const cfg = getConfig()
+    const password = secrets.getKey(userDataDir, 'webdav')
+    const taskId = tasks.create('webdav', 'WebDAV 恢复备份', {
+      detail: name ? `正在恢复 ${name}` : '正在恢复备份…',
+      progress: { done: 0, total: 0, label: '恢复' },
+    })
+    try {
+      const result = await webdav.restoreBackup({ cfg, dir: userDataDir, password, name, logger })
+      tasks.done(taskId, result)
+      return result
+    } catch (e) {
+      tasks.error(taskId, e.message || '恢复失败')
       throw e
     }
   })
@@ -356,6 +529,24 @@ function registerIpc({ app, getMainWindow, updater }) {
     secrets.clearKey(userDataDir, 'webdav')
     return { ok: true }
   })
+
+  // ── 本地备份 ──
+  ipcMain.handle('localBackup:create', async (_e, { dir: targetDir } = {}) => {
+    const cfg = getConfig()
+    const result = localBackup.createLocalBackup({
+      cfg,
+      dir: userDataDir,
+      downloadsDir: targetDir || app.getPath('downloads'),
+      appVersion: app.getVersion(),
+    })
+    logger.info('local.backup', '本地备份完成', { name: result.name, filePath: result.filePath, bytes: result.bytes, fileCount: result.fileCount })
+    return result
+  })
+
+  // ── 日志 ──
+  ipcMain.handle('logs:list', (_e, { limit } = {}) => listLogs(userDataDir, limit))
+  ipcMain.handle('logs:clear', () => clearLogs(userDataDir))
+  ipcMain.handle('logs:path', () => logPath(userDataDir))
 
   // ── AI 记忆 ──
   ipcMain.handle('memory:list', () => memory.listIndex(userDataDir))

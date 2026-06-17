@@ -8,6 +8,7 @@ import { ChatPage } from '@/pages/ChatPage'
 import { NotesPage } from '@/pages/NotesPage'
 import { ReposPage } from '@/pages/ReposPage'
 import { HistoryPage } from '@/pages/HistoryPage'
+import { LogsPage } from '@/pages/LogsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 
 // macOS hiddenInset 标题栏会浮在内容之上，需要为交通灯按钮预留空间
@@ -30,6 +31,7 @@ export function App() {
         {page === 'notes' && <NotesPage />}
         {page === 'repos' && <ReposPage />}
         {page === 'history' && <HistoryPage />}
+        {page === 'logs' && <LogsPage />}
         {page === 'settings' && <SettingsPage />}
       </AppShell>
       <Statusbar />

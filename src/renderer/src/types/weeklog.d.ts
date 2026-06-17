@@ -43,6 +43,10 @@ export interface Config {
     miscProject: string
     dir?: string
   }
+  codexHook: {
+    enabled: boolean
+    port: number
+  }
   ui: {
     theme: 'auto' | 'light' | 'dark'
     quickNoteShortcut: string
@@ -67,6 +71,7 @@ export interface Config {
     url: string
     username: string
     autoSync: 'off' | 'pull' | 'push' | 'both'
+    backupRetention?: number
   }
   memory: {
     enabled: boolean
@@ -83,6 +88,60 @@ export interface Note {
   project: string | null
   content: string
   source: string
+}
+
+export interface CodexPendingNote {
+  id: string
+  source: 'codex'
+  status: 'pending' | 'written' | 'deleted'
+  cwd: string
+  project: string
+  summary: string
+  branch?: string
+  changedFiles: string[]
+  title?: string
+  createdAt: string
+  writtenAt?: string
+}
+
+export interface CodexHookStatus {
+  enabled: boolean
+  hasToken: boolean
+  running: boolean
+  host: string
+  port: number
+  endpoint: string
+  error: string
+  hookInstalled: boolean
+  hookCount: number
+  hooksPath: string
+  hookError: string
+}
+
+export interface CodexHookCopyConfigResult {
+  enabled: boolean
+  endpoint: string
+  text: string
+}
+
+export interface CodexHookInstallStatus {
+  hooksPath: string
+  exists: boolean
+  installed: boolean
+  hookCount: number
+  error: string
+}
+
+export interface CodexHookInstallResult {
+  ok: boolean
+  installed?: boolean
+  removed?: number
+  replaced?: number
+  hooksPath?: string
+  backupPath?: string
+  endpoint?: string
+  error?: string
+  status?: CodexHookInstallStatus
 }
 
 export interface CollectStats {
@@ -183,8 +242,46 @@ export interface WebdavSyncResult {
   errors: string[]
 }
 
+export interface WebdavBackupInfo {
+  name: string
+  deviceName: string
+  createdAt: string
+  size: number
+  lastModified: string
+}
+
+export interface WebdavBackupResult {
+  name: string
+  remoteUrl?: string
+  bytes?: number
+  fileCount?: number
+  pruned?: number
+}
+
+export interface WebdavRestoreResult {
+  name: string
+  safetyName: string
+  restoredFiles: number
+  manifest?: {
+    schemaVersion: number
+    createdAt: string
+    deviceName: string
+    appVersion?: string
+    fileCount?: number
+  }
+}
+
+export interface LocalBackupResult {
+  name: string
+  filePath: string
+  bytes: number
+  fileCount: number
+}
+
 export interface WebdavStatus {
   lastSync?: string
+  lastBackup?: string
+  lastRestore?: string
   direction?: string
   durationMs?: number
   pulled?: number
@@ -374,6 +471,14 @@ export interface UpdatePayload {
   status: UpdateStatus
 }
 
+export interface AppLogEntry {
+  ts: string
+  level: 'debug' | 'info' | 'warn' | 'error'
+  scope: string
+  message: string
+  data?: Record<string, unknown>
+}
+
 export interface WeeklogAPI {
   config: {
     get: () => Promise<Config>
@@ -408,6 +513,16 @@ export interface WeeklogAPI {
     saveText: (n: { date: string; text: string }) => Promise<{ ok: boolean }>
     list: (q: { from: string; to: string }) => Promise<Note[]>
   }
+  codexNotes: {
+    list: () => Promise<CodexPendingNote[]>
+    delete: (ids: string[]) => Promise<{ deleted: number }>
+    write: (q: { ids: string[]; project?: string; content?: string }) => Promise<{ written: number; files: string[] }>
+    summarize: (ids: string[]) => Promise<{ text?: string; model?: string; error?: string }>
+    status: () => Promise<CodexHookStatus>
+    copyConfig: () => Promise<CodexHookCopyConfigResult>
+    installHook: () => Promise<CodexHookInstallResult>
+    uninstallHook: () => Promise<CodexHookInstallResult>
+  }
   collect: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<CollectResult>
   generate: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<Report>
   onProgress: (cb: (m: GenerateProgress) => void) => () => void
@@ -419,14 +534,21 @@ export interface WeeklogAPI {
   dialog: {
     pickFolder: () => Promise<string | null>
     pickRepo: () => Promise<string | null>
+    pickBackupFolder: () => Promise<string | null>
   }
   webdav: {
     test: (url: string, username: string, password: string) => Promise<WebdavTestResult>
     syncNow: (direction: 'pull' | 'push' | 'both') => Promise<WebdavSyncResult>
+    backupNow: () => Promise<WebdavBackupResult>
+    listBackups: () => Promise<WebdavBackupInfo[]>
+    restoreBackup: (name: string) => Promise<WebdavRestoreResult>
     status: () => Promise<WebdavStatus>
     savePassword: (password: string) => Promise<{ ok: boolean }>
     passwordStatus: () => Promise<WebdavPasswordStatusResult>
     clearPassword: () => Promise<{ ok: boolean }>
+  }
+  localBackup: {
+    create: (dir?: string) => Promise<LocalBackupResult>
   }
   memory: {
     list: () => Promise<MemoryIndexItem[]>
@@ -459,6 +581,11 @@ export interface WeeklogAPI {
     remove: (id: string) => Promise<{ ok: boolean }>
     clearFinished: () => Promise<{ ok: boolean }>
     onUpdate: (cb: (payload: TaskUpdatePayload) => void) => () => void
+  }
+  logs: {
+    list: (limit?: number) => Promise<AppLogEntry[]>
+    clear: () => Promise<{ ok: boolean }>
+    path: () => Promise<string>
   }
   updates: {
     status: () => Promise<UpdateStatus>

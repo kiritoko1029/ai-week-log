@@ -34,6 +34,8 @@ ok('不暴露 webdav.getPassword()', !/webdav:\s*{[\s\S]*?\bgetPassword:\s*\(/.t
 ok('不调用 webdav:getPassword IPC', !preload.includes('webdav:getPassword'))
 ok('暴露 secrets.status()', /secrets:\s*{[\s\S]*?\bstatus:\s*\(/.test(preload))
 ok('暴露 webdav.passwordStatus()', /webdav:\s*{[\s\S]*?\bpasswordStatus:\s*\(/.test(preload))
+ok('不暴露 codexHook token 读写能力', !preload.includes('codexHook:getToken') && !preload.includes('codexHook:setToken'))
+ok('Codex hook 安装不通过 preload 暴露 token', !preload.includes('codexHookToken') && !preload.includes('token:'))
 
 console.log('\n[2] generate IPC 异常会落到任务失败')
 const ipc = fs.readFileSync(path.join(__dirname, '..', 'src/main/ipc.js'), 'utf8')
@@ -77,5 +79,85 @@ if (W._test && W._test.mergeJsonArraysById) {
   ok('报告拉取了远端新增/更新', merged.pulled === 2, 'pulled=' + merged.pulled)
 }
 
-console.log(`\n结果：${pass} 通过，${fail} 失败\n`)
-process.exit(fail ? 1 : 0)
+async function testWebdavSyncFilePushesMissingRemote() {
+  console.log('\n[6] WebDAV 双向同步新本地文件')
+  ok('导出 syncFile 测试辅助', W._test && typeof W._test.syncFile === 'function')
+  if (!W._test || typeof W._test.syncFile !== 'function') return
+
+  const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'wl-webdav-'))
+  const localPath = path.join(tmp, 'notes', '2026-06-17.md')
+  fs.mkdirSync(path.dirname(localPath), { recursive: true })
+  fs.writeFileSync(localPath, '今日完成 WebDAV 同步修复', 'utf8')
+
+  const calls = []
+  const oldFetch = global.fetch
+  global.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), method: opts.method || 'GET', body: opts.body || null })
+    if (!opts.method || opts.method === 'GET') {
+      return {
+        status: 404,
+        text: async () => 'not found',
+      }
+    }
+    if (opts.method === 'PUT') {
+      return {
+        status: 201,
+        text: async () => '',
+      }
+    }
+    return {
+      status: 500,
+      text: async () => 'unexpected method',
+    }
+  }
+
+  try {
+    const result = await W._test.syncFile('https://dav.example.com/weeklog/notes/2026-06-17.md', localPath, { username: 'u', password: 'p' }, 'both')
+    const put = calls.find((c) => c.method === 'PUT')
+    ok('远端缺失时双向同步会上传本地文件', result === 'pushed' && put && put.body === '今日完成 WebDAV 同步修复', JSON.stringify({ result, calls }))
+  } finally {
+    global.fetch = oldFetch
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+async function testWebdavSyncAllThrowsConnectionFailure() {
+  console.log('\n[7] WebDAV 连接失败会直接报错')
+  const oldFetch = global.fetch
+  const calls = []
+  global.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), method: opts.method || 'GET' })
+    return {
+      status: 401,
+      text: async () => 'Unauthorized',
+    }
+  }
+
+  try {
+    let err = null
+    try {
+      await W.syncAll({
+        cfg: { webdav: { url: 'https://dav.example.com/weeklog/', username: 'u' } },
+        dir: require('os').tmpdir(),
+        password: 'bad-password',
+        direction: 'both',
+      })
+    } catch (e) {
+      err = e
+    }
+    ok('基础连接失败时 syncAll reject', !!err, 'calls=' + JSON.stringify(calls))
+    ok('错误信息明确提示 WebDAV 连接失败', /WebDAV 连接失败|认证失败|401/.test(String(err && err.message || '')), String(err && err.message || ''))
+  } finally {
+    global.fetch = oldFetch
+  }
+}
+
+testWebdavSyncFilePushesMissingRemote().then(testWebdavSyncAllThrowsConnectionFailure).then(() => {
+  console.log(`\n结果：${pass} 通过，${fail} 失败\n`)
+  process.exit(fail ? 1 : 0)
+}).catch((e) => {
+  fail++
+  console.log('  ✗ WebDAV 回归测试异常  → ' + (e && e.message || e))
+  console.log(`\n结果：${pass} 通过，${fail} 失败\n`)
+  process.exit(1)
+})

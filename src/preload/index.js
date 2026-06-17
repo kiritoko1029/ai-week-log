@@ -40,6 +40,16 @@ contextBridge.exposeInMainWorld('weeklog', {
     saveText: (n) => ipcRenderer.invoke('notes:saveText', n),
     list: (q) => ipcRenderer.invoke('notes:list', q),
   },
+  codexNotes: {
+    list: () => ipcRenderer.invoke('codexNotes:list'),
+    delete: (ids) => ipcRenderer.invoke('codexNotes:delete', { ids }),
+    write: (q) => ipcRenderer.invoke('codexNotes:write', q),
+    summarize: (ids) => ipcRenderer.invoke('codexNotes:summarize', { ids }),
+    status: () => ipcRenderer.invoke('codexHook:status'),
+    copyConfig: () => ipcRenderer.invoke('codexHook:copyConfig'),
+    installHook: () => ipcRenderer.invoke('codexHook:install'),
+    uninstallHook: () => ipcRenderer.invoke('codexHook:uninstall'),
+  },
   collect: (q) => ipcRenderer.invoke('collect', q),
   generate: (q) => ipcRenderer.invoke('generate', q),
   onProgress: (cb) => {
@@ -55,14 +65,21 @@ contextBridge.exposeInMainWorld('weeklog', {
   dialog: {
     pickFolder: () => ipcRenderer.invoke('dialog:pickFolder'),
     pickRepo: () => ipcRenderer.invoke('dialog:pickRepo'),
+    pickBackupFolder: () => ipcRenderer.invoke('dialog:pickBackupFolder'),
   },
   webdav: {
     test: (url, username, password) => ipcRenderer.invoke('webdav:test', { url, username, password }),
     syncNow: (direction) => ipcRenderer.invoke('webdav:syncNow', { direction }),
+    backupNow: () => ipcRenderer.invoke('webdav:backupNow'),
+    listBackups: () => ipcRenderer.invoke('webdav:listBackups'),
+    restoreBackup: (name) => ipcRenderer.invoke('webdav:restoreBackup', { name }),
     status: () => ipcRenderer.invoke('webdav:status'),
     savePassword: (password) => ipcRenderer.invoke('webdav:savePassword', { password }),
     passwordStatus: () => ipcRenderer.invoke('webdav:passwordStatus'),
     clearPassword: () => ipcRenderer.invoke('webdav:clearPassword'),
+  },
+  localBackup: {
+    create: (dir) => ipcRenderer.invoke('localBackup:create', { dir }),
   },
   memory: {
     list: () => ipcRenderer.invoke('memory:list'),
@@ -101,6 +118,11 @@ contextBridge.exposeInMainWorld('weeklog', {
       ipcRenderer.on('task:update', handler)
       return () => ipcRenderer.removeListener('task:update', handler)
     },
+  },
+  logs: {
+    list: (limit) => ipcRenderer.invoke('logs:list', { limit }),
+    clear: () => ipcRenderer.invoke('logs:clear'),
+    path: () => ipcRenderer.invoke('logs:path'),
   },
   updates: {
     status: () => ipcRenderer.invoke('updates:status'),
