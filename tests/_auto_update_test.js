@@ -82,6 +82,9 @@ ok('dist:win disables electron-builder GitHub publishing', pkg.scripts['dist:win
 ok('dist:mac disables electron-builder GitHub publishing', pkg.scripts['dist:mac'].includes('--publish never'))
 const releaseWorkflow = read('.github/workflows/release.yml')
 ok('release workflow does not pass GH_TOKEN to electron-builder packaging', !releaseWorkflow.includes('GH_TOKEN:'))
+ok('release workflow fetches tags for release notes', releaseWorkflow.includes('fetch-depth: 0') && releaseWorkflow.includes('fetch-tags: true'))
+ok('release workflow writes commit-based release notes', releaseWorkflow.includes('Generate release notes') && releaseWorkflow.includes('RELEASE_NOTES.md'))
+ok('release action uses generated release notes body', releaseWorkflow.includes('body_path: RELEASE_NOTES.md'))
 
 console.log(`\nResult: ${pass} passed, ${fail} failed\n`)
 process.exit(fail ? 1 : 0)
