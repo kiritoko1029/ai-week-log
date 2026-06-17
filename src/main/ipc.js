@@ -21,9 +21,11 @@ const secrets = require('./secrets')
 const { collect, generate } = require('./pipeline')
 const { isoDate } = require('./utils')
 const webdav = require('./webdav')
+const localBackup = require('./local-backup')
 const memory = require('./memory')
 const chat = require('./chat')
 const tasks = require('./tasks')
+const { createLogger, listLogs, clearLogs, logPath } = require('./logger')
 
 const HISTORY_FILE = 'history.json'
 const SECRET_PROVIDERS = new Set(['openai', 'anthropic', 'webdav'])
@@ -70,6 +72,7 @@ function normalizeSecretProvider(provider, fallback) {
 
 function registerIpc({ app, getMainWindow, updater }) {
   const userDataDir = app.getPath('userData')
+  const logger = createLogger(userDataDir)
   const getConfig = () => loadConfig(userDataDir)
   const persist = (cfg) => {
     saveConfig(userDataDir, mergeConfig(defaultConfig(), cfg))
@@ -312,6 +315,14 @@ function registerIpc({ app, getMainWindow, updater }) {
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
     return r.canceled ? null : r.filePaths[0]
   })
+  ipcMain.handle('dialog:pickBackupFolder', async () => {
+    const win = getMainWindow()
+    const r = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: app.getPath('downloads'),
+    })
+    return r.canceled ? null : r.filePaths[0]
+  })
   // 在系统默认浏览器打开外链（仅放行 http/https，防 XSS）
   ipcMain.handle('shell:openExternal', (_e, url) => {
     if (typeof url !== 'string') return
@@ -323,7 +334,7 @@ function registerIpc({ app, getMainWindow, updater }) {
 
   // ── WebDAV 同步 ──
   ipcMain.handle('webdav:test', async (_e, { url, username, password }) => {
-    return webdav.testConnection({ url, username, password: password || secrets.getKey(userDataDir, 'webdav') })
+    return webdav.testConnection({ url, username, password: password || secrets.getKey(userDataDir, 'webdav'), logger })
   })
   ipcMain.handle('webdav:syncNow', async (_e, { direction } = {}) => {
     const cfg = getConfig()
@@ -335,11 +346,48 @@ function registerIpc({ app, getMainWindow, updater }) {
       progress: { done: 0, total: 0, label: dirLabel },
     })
     try {
-      const result = await webdav.syncAll({ cfg, dir: userDataDir, password, direction: dir })
+      const result = await webdav.syncAll({ cfg, dir: userDataDir, password, direction: dir, logger })
       tasks.done(taskId, { pulled: result.pulled, pushed: result.pushed })
       return result
     } catch (e) {
       tasks.error(taskId, e.message || '同步失败')
+      throw e
+    }
+  })
+  ipcMain.handle('webdav:backupNow', async () => {
+    const cfg = getConfig()
+    const password = secrets.getKey(userDataDir, 'webdav')
+    const taskId = tasks.create('webdav', 'WebDAV 备份', {
+      detail: '正在创建远端备份…',
+      progress: { done: 0, total: 0, label: '备份' },
+    })
+    try {
+      const result = await webdav.createBackup({ cfg, dir: userDataDir, password, appVersion: app.getVersion(), logger })
+      tasks.done(taskId, result)
+      return result
+    } catch (e) {
+      tasks.error(taskId, e.message || '备份失败')
+      throw e
+    }
+  })
+  ipcMain.handle('webdav:listBackups', async () => {
+    const cfg = getConfig()
+    const password = secrets.getKey(userDataDir, 'webdav')
+    return webdav.listBackups({ cfg, password, logger })
+  })
+  ipcMain.handle('webdav:restoreBackup', async (_e, { name } = {}) => {
+    const cfg = getConfig()
+    const password = secrets.getKey(userDataDir, 'webdav')
+    const taskId = tasks.create('webdav', 'WebDAV 恢复备份', {
+      detail: name ? `正在恢复 ${name}` : '正在恢复备份…',
+      progress: { done: 0, total: 0, label: '恢复' },
+    })
+    try {
+      const result = await webdav.restoreBackup({ cfg, dir: userDataDir, password, name, logger })
+      tasks.done(taskId, result)
+      return result
+    } catch (e) {
+      tasks.error(taskId, e.message || '恢复失败')
       throw e
     }
   })
@@ -356,6 +404,24 @@ function registerIpc({ app, getMainWindow, updater }) {
     secrets.clearKey(userDataDir, 'webdav')
     return { ok: true }
   })
+
+  // ── 本地备份 ──
+  ipcMain.handle('localBackup:create', async (_e, { dir: targetDir } = {}) => {
+    const cfg = getConfig()
+    const result = localBackup.createLocalBackup({
+      cfg,
+      dir: userDataDir,
+      downloadsDir: targetDir || app.getPath('downloads'),
+      appVersion: app.getVersion(),
+    })
+    logger.info('local.backup', '本地备份完成', { name: result.name, filePath: result.filePath, bytes: result.bytes, fileCount: result.fileCount })
+    return result
+  })
+
+  // ── 日志 ──
+  ipcMain.handle('logs:list', (_e, { limit } = {}) => listLogs(userDataDir, limit))
+  ipcMain.handle('logs:clear', () => clearLogs(userDataDir))
+  ipcMain.handle('logs:path', () => logPath(userDataDir))
 
   // ── AI 记忆 ──
   ipcMain.handle('memory:list', () => memory.listIndex(userDataDir))

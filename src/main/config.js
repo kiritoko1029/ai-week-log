@@ -65,7 +65,8 @@ function defaultConfig() {
       enabled: false,
       url: '', // 如 https://dav.example.com/weeklog/
       username: '',
-      autoSync: 'both', // off | pull | push | both（启动拉取/退出推送）
+      autoSync: 'push', // off | push（退出时自动备份）；旧值 pull/both 兼容为启动/退出同步
+      backupRetention: 10, // WebDAV 远端压缩备份保留份数
       // password 不落盘，走 secrets.js 加密存储（provider='webdav'）
     },
     memory: {

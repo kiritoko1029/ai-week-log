@@ -67,6 +67,7 @@ export interface Config {
     url: string
     username: string
     autoSync: 'off' | 'pull' | 'push' | 'both'
+    backupRetention?: number
   }
   memory: {
     enabled: boolean
@@ -183,8 +184,46 @@ export interface WebdavSyncResult {
   errors: string[]
 }
 
+export interface WebdavBackupInfo {
+  name: string
+  deviceName: string
+  createdAt: string
+  size: number
+  lastModified: string
+}
+
+export interface WebdavBackupResult {
+  name: string
+  remoteUrl?: string
+  bytes?: number
+  fileCount?: number
+  pruned?: number
+}
+
+export interface WebdavRestoreResult {
+  name: string
+  safetyName: string
+  restoredFiles: number
+  manifest?: {
+    schemaVersion: number
+    createdAt: string
+    deviceName: string
+    appVersion?: string
+    fileCount?: number
+  }
+}
+
+export interface LocalBackupResult {
+  name: string
+  filePath: string
+  bytes: number
+  fileCount: number
+}
+
 export interface WebdavStatus {
   lastSync?: string
+  lastBackup?: string
+  lastRestore?: string
   direction?: string
   durationMs?: number
   pulled?: number
@@ -374,6 +413,14 @@ export interface UpdatePayload {
   status: UpdateStatus
 }
 
+export interface AppLogEntry {
+  ts: string
+  level: 'debug' | 'info' | 'warn' | 'error'
+  scope: string
+  message: string
+  data?: Record<string, unknown>
+}
+
 export interface WeeklogAPI {
   config: {
     get: () => Promise<Config>
@@ -419,14 +466,21 @@ export interface WeeklogAPI {
   dialog: {
     pickFolder: () => Promise<string | null>
     pickRepo: () => Promise<string | null>
+    pickBackupFolder: () => Promise<string | null>
   }
   webdav: {
     test: (url: string, username: string, password: string) => Promise<WebdavTestResult>
     syncNow: (direction: 'pull' | 'push' | 'both') => Promise<WebdavSyncResult>
+    backupNow: () => Promise<WebdavBackupResult>
+    listBackups: () => Promise<WebdavBackupInfo[]>
+    restoreBackup: (name: string) => Promise<WebdavRestoreResult>
     status: () => Promise<WebdavStatus>
     savePassword: (password: string) => Promise<{ ok: boolean }>
     passwordStatus: () => Promise<WebdavPasswordStatusResult>
     clearPassword: () => Promise<{ ok: boolean }>
+  }
+  localBackup: {
+    create: (dir?: string) => Promise<LocalBackupResult>
   }
   memory: {
     list: () => Promise<MemoryIndexItem[]>
@@ -459,6 +513,11 @@ export interface WeeklogAPI {
     remove: (id: string) => Promise<{ ok: boolean }>
     clearFinished: () => Promise<{ ok: boolean }>
     onUpdate: (cb: (payload: TaskUpdatePayload) => void) => () => void
+  }
+  logs: {
+    list: (limit?: number) => Promise<AppLogEntry[]>
+    clear: () => Promise<{ ok: boolean }>
+    path: () => Promise<string>
   }
   updates: {
     status: () => Promise<UpdateStatus>

@@ -8,6 +8,7 @@ export type PageId =
   | 'notes'
   | 'repos'
   | 'history'
+  | 'logs'
   | 'settings'
 
 interface NavContextValue {

@@ -4,6 +4,7 @@ import { useConfig } from '@/hooks/useConfig'
 import { cn } from '@/lib/utils'
 import { GitBranch, KeyRound } from 'lucide-react'
 import { TaskIndicator } from '@/components/TaskIndicator'
+import { GithubIcon } from '@/components/GithubIcon'
 
 export function Statusbar() {
   const { config } = useConfig()
@@ -55,6 +56,15 @@ export function Statusbar() {
       <span className="ml-auto flex items-center gap-3">
         <TaskIndicator />
         <span>WeekLog v{__APP_VERSION__}</span>
+        <button
+          data-app-region="no-drag"
+          onClick={() => api.shell.openExternal('https://github.com/kiritoko1029/ai-week-log')}
+          className="text-muted-foreground transition-colors hover:text-foreground"
+          title="GitHub 仓库"
+          aria-label="GitHub 仓库"
+        >
+          <GithubIcon className="h-3.5 w-3.5" />
+        </button>
       </span>
     </footer>
   )
