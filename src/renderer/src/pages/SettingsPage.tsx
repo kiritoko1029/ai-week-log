@@ -486,7 +486,6 @@ export function SettingsPage() {
               <div className="h-2 overflow-hidden rounded-full bg-muted">
                 <div className="h-full bg-primary transition-all" style={{ width: `${Math.round(updateStatus.progress.percent || 0)}%` }} />
               </div>
-              <p className="text-xs text-muted-foreground">下载进度 {Math.round(updateStatus.progress.percent || 0)}%</p>
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">

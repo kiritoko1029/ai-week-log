@@ -348,7 +348,7 @@ app.whenReady().then(() => {
     dev: process.env.WEEKLOG_DEV === '1',
   })
 
-  updater = createUpdaterController({ app, getMainWindow: () => mainWindow })
+  updater = createUpdaterController({ app, getMainWindow: () => mainWindow, logger })
   codexHookServer = createCodexHookServer({
     dir: app.getPath('userData'),
     getConfig: () => loadConfig(app.getPath('userData')),

@@ -143,6 +143,7 @@ function pickDmgAsset(assets) {
 
 function createUpdaterController(opts = {}) {
   const appRef = opts.app || app
+  const logger = opts.logger || null
   let sender = null
   let wired = false
   const isPackaged = !!(appRef && appRef.isPackaged)
@@ -376,7 +377,9 @@ log "==== 安装结束 ===="
 `
     fs.writeFileSync(scriptPath, script, { mode: 0o755 })
 
-    log('[updater] 启动 detached 安装脚本，主进程即将退出')
+    if (logger) {
+      logger.info('updater.install', '启动 detached 安装脚本，主进程即将退出', { scriptPath, dmgPath })
+    }
     const child = spawn('bash', [scriptPath], {
       detached: true,
       stdio: 'ignore',
