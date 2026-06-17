@@ -109,9 +109,12 @@ ok('electron-builder uses build resources', pkg.build && pkg.build.directories &
 ok('mac build icon configured', pkg.build && pkg.build.mac && pkg.build.mac.icon === 'build/icon.icns')
 ok('win build icon configured', pkg.build && pkg.build.win && pkg.build.win.icon === 'build/icon.ico')
 ok('runtime PNG is included in packaged app files', Array.isArray(pkg.build && pkg.build.files) && pkg.build.files.includes('build/icon.png'), JSON.stringify(pkg.build && pkg.build.files))
+ok('runtime ICO is included in packaged app files', Array.isArray(pkg.build && pkg.build.files) && pkg.build.files.includes('build/icon.ico'), JSON.stringify(pkg.build && pkg.build.files))
 
 const main = read('src/main/index.js').toString('utf8')
 ok('BrowserWindow receives app icon path', main.includes('getAppIconPath') && main.includes('iconPath'))
+ok('Windows runtime prefers ICO app icon', main.includes("process.platform === 'win32'") && main.includes("'build', 'icon.ico'"))
+ok('Windows taskbar relaunch details use app icon', main.includes('setAppDetails') && main.includes('appIconPath'))
 ok('tray prefers generated app icon asset', main.includes('nativeImage.createFromPath(iconPath)'))
 
 const indexHtml = read('src/renderer/index.html').toString('utf8')

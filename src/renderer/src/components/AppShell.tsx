@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   LayoutDashboard,
   FileText,
@@ -8,9 +9,12 @@ import {
   Settings,
   LineChart,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 import { useNav, type PageId } from '@/hooks/useNav'
 import { useConfig } from '@/hooks/useConfig'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -39,8 +43,10 @@ interface NavSection {
 export function AppShell({ children, isMac }: { children: React.ReactNode; isMac?: boolean }) {
   const { page, navigate } = useNav()
   const { config } = useConfig()
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
 
   const repoCount = config?.repos.length ?? 0
+  const sidebarToggleLabel = sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'
 
   const sections: NavSection[] = [
     {
@@ -138,37 +144,89 @@ export function AppShell({ children, isMac }: { children: React.ReactNode; isMac
 
       <div className="flex flex-1 overflow-hidden">
         {/* 侧边栏 */}
-        <aside className="flex w-[240px] flex-shrink-0 flex-col overflow-y-auto border-r bg-sidebar">
-          <div className="border-b px-5 pb-4 pt-5">
-            <h1 className="text-xl font-bold tracking-tight">WeekLog</h1>
-          </div>
-          <nav className="flex-1 px-3 pb-3 pt-4">
-            {sections.map((sec) => (
-              <div key={sec.title} className="mb-4">
-                <div className="px-3 pb-1.5 font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {sec.title}
+        <TooltipProvider delayDuration={120}>
+          <aside
+            className={cn(
+              'flex flex-shrink-0 flex-col overflow-y-auto border-r bg-sidebar transition-[width] duration-200 ease-out',
+              sidebarCollapsed ? 'w-[72px]' : 'w-[240px]'
+            )}
+          >
+            <div className={cn('border-b pb-4 pt-5', sidebarCollapsed ? 'px-3' : 'px-5')}>
+              <div
+                className={cn(
+                  'flex items-center',
+                  sidebarCollapsed ? 'flex-col gap-2' : 'justify-between gap-2'
+                )}
+              >
+                <div
+                  className={cn(
+                    'flex min-w-0 items-center gap-2 text-primary',
+                    sidebarCollapsed && 'justify-center'
+                  )}
+                >
+                  {sidebarCollapsed && <LineChart className="h-[18px] w-[18px]" />}
+                  <h1 className={cn('text-xl font-bold tracking-tight text-foreground', sidebarCollapsed && 'sr-only')}>
+                    WeekLog
+                  </h1>
                 </div>
-                <ul className="space-y-0.5">
-                  {sec.items.map((item) => {
-                    const active = page === item.id
-                    return (
-                      <li key={item.id}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      data-app-region="no-drag"
+                      type="button"
+                      onClick={() => setSidebarCollapsed((value) => !value)}
+                      aria-label={sidebarToggleLabel}
+                      aria-pressed={sidebarCollapsed}
+                      title={sidebarToggleLabel}
+                      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {sidebarCollapsed ? (
+                        <PanelLeftOpen className="h-4 w-4" />
+                      ) : (
+                        <PanelLeftClose className="h-4 w-4" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">{sidebarToggleLabel}</TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+            <nav className={cn('flex-1 pb-3 pt-4', sidebarCollapsed ? 'px-2' : 'px-3')}>
+              {sections.map((sec) => (
+                <div key={sec.title} className={cn(sidebarCollapsed ? 'mb-1' : 'mb-4')}>
+                  <div
+                    className={cn(
+                      'px-3 pb-1.5 font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground',
+                      sidebarCollapsed && 'sr-only'
+                    )}
+                  >
+                    {sec.title}
+                  </div>
+                  <ul className="space-y-0.5">
+                    {sec.items.map((item) => {
+                      const active = page === item.id
+                      const navButton = (
                         <button
                           data-app-region="no-drag"
+                          type="button"
                           onClick={() => navigate(item.id)}
+                          aria-label={item.label}
                           className={cn(
-                            'flex w-full cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                            'relative flex w-full cursor-pointer items-center rounded-md text-sm font-medium transition-colors',
+                            sidebarCollapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3 py-2',
                             active
                               ? 'bg-primary text-primary-foreground shadow-sm'
                               : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                           )}
                         >
                           {item.icon}
-                          <span className="flex-1 text-left">{item.label}</span>
+                          <span className={cn('flex-1 text-left', sidebarCollapsed && 'sr-only')}>{item.label}</span>
                           {item.badge != null && item.badge > 0 && (
                             <span
                               className={cn(
-                                'rounded-full px-2 py-px font-mono text-[11px] font-semibold',
+                                sidebarCollapsed
+                                  ? 'absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full p-0 font-mono text-[10px] font-semibold'
+                                  : 'rounded-full px-2 py-px font-mono text-[11px] font-semibold',
                                 active ? 'bg-primary-foreground text-primary' : 'bg-muted text-muted-foreground'
                               )}
                             >
@@ -176,26 +234,64 @@ export function AppShell({ children, isMac }: { children: React.ReactNode; isMac
                             </span>
                           )}
                         </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            ))}
-          </nav>
-          <div className="flex flex-shrink-0 items-center gap-2 border-t px-5 py-3">
-            <span className="font-mono text-xs text-muted-foreground">v{__APP_VERSION__}</span>
-            <button
-              data-app-region="no-drag"
-              onClick={() => api.shell.openExternal('https://github.com/kiritoko1029/ai-week-log')}
-              className="text-muted-foreground transition-colors hover:text-foreground"
-              title="GitHub 仓库"
-              aria-label="GitHub 仓库"
+                      )
+                      return (
+                        <li key={item.id}>
+                          {sidebarCollapsed ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>{navButton}</TooltipTrigger>
+                              <TooltipContent side="right">{item.label}</TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            navButton
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </nav>
+            <div
+              className={cn(
+                'flex flex-shrink-0 border-t py-3',
+                sidebarCollapsed ? 'flex-col items-center gap-2 px-2' : 'items-center gap-2 px-5'
+              )}
             >
-              <GithubIcon className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </aside>
+              <span className={cn('font-mono text-xs text-muted-foreground', sidebarCollapsed && 'sr-only')}>
+                v{__APP_VERSION__}
+              </span>
+              {sidebarCollapsed ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      data-app-region="no-drag"
+                      type="button"
+                      onClick={() => api.shell.openExternal('https://github.com/kiritoko1029/ai-week-log')}
+                      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                      title="GitHub 仓库"
+                      aria-label="GitHub 仓库"
+                    >
+                      <GithubIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">GitHub 仓库</TooltipContent>
+                </Tooltip>
+              ) : (
+                <button
+                  data-app-region="no-drag"
+                  type="button"
+                  onClick={() => api.shell.openExternal('https://github.com/kiritoko1029/ai-week-log')}
+                  className="text-muted-foreground transition-colors hover:text-foreground"
+                  title="GitHub 仓库"
+                  aria-label="GitHub 仓库"
+                >
+                  <GithubIcon className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </aside>
+        </TooltipProvider>
 
         {/* 内容区 */}
         <main className="flex-1 overflow-y-auto">

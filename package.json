@@ -37,6 +37,7 @@
     },
     "files": [
       "build/icon.png",
+      "build/icon.ico",
       "src/**/*",
       "!src/renderer/src/**",
       "!src/renderer/public/**",

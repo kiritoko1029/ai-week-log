@@ -26,10 +26,12 @@ const { syncAll } = require('./webdav')
 const { createUpdaterController } = require('./updater')
 const secrets = require('./secrets')
 
+const APP_ID = 'com.weeklog.desktop'
 const SHORTCUT_DEFAULT = 'CommandOrControl+Shift+L'
 const PRELOAD = path.join(__dirname, '..', 'preload', 'index.js')
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer')
-const APP_ICON = path.join(__dirname, '..', '..', 'build', 'icon.png')
+const APP_ICON_PNG = path.join(__dirname, '..', '..', 'build', 'icon.png')
+const APP_ICON_ICO = path.join(__dirname, '..', '..', 'build', 'icon.ico')
 // 开发模式直连 Vite dev server（HMR）；生产模式加载打包产物 dist/
 const DEV_SERVER_URL = process.env.WEEKLOG_DEV ? 'http://localhost:5173' : ''
 const DEV_SERVER_ORIGIN = DEV_SERVER_URL ? new URL(DEV_SERVER_URL).origin : ''
@@ -45,7 +47,23 @@ let updater = null
 /** 当前主题是否解析为深色（依据 nativeTheme） */
 function isDark() { return nativeTheme.shouldUseDarkColors }
 function windowBg() { return isDark() ? '#0b1020' : '#eef2fb' }
-function getAppIconPath() { return APP_ICON }
+function getAppIconPath() {
+  return process.platform === 'win32' ? APP_ICON_ICO : APP_ICON_PNG
+}
+function getTrayIconPath() { return APP_ICON_PNG }
+
+function applyWindowsAppDetails(win) {
+  if (process.platform !== 'win32' || !win) return
+  try {
+    win.setAppDetails({
+      appId: APP_ID,
+      appIconPath: APP_ICON_ICO,
+      appIconIndex: 0,
+      relaunchCommand: process.execPath,
+      relaunchDisplayName: 'WeekLog',
+    })
+  } catch {}
+}
 
 function isAllowedRendererUrl(rawUrl) {
   try {
@@ -86,6 +104,7 @@ function createWindow() {
       sandbox: true,
     },
   })
+  applyWindowsAppDetails(mainWindow)
   hardenWindow(mainWindow)
 
   // 生产用 loadFile（正确处理 Windows 路径）；开发直连 Vite dev server
@@ -146,6 +165,7 @@ function createQuickNoteWindow() {
       sandbox: true,
     },
   })
+  applyWindowsAppDetails(quickNoteWin)
   hardenWindow(quickNoteWin)
 
   if (DEV_SERVER_URL) {
@@ -214,7 +234,7 @@ function applyNativeTheme(theme) {
 
 // ── 托盘 ──
 function createTray() {
-  const iconPath = getAppIconPath()
+  const iconPath = getTrayIconPath()
   let image = nativeImage.createFromPath(iconPath)
   if (image.isEmpty()) image = nativeImage.createFromBuffer(trayIconBuffer(32))
   if (process.platform === 'darwin') image = image.resize({ width: 18, height: 18 })
@@ -313,7 +333,7 @@ function triggerAutoSync(action) {
 app.whenReady().then(() => {
   // Windows 下设置 AppUserModelId，使通知以正确应用名显示
   if (process.platform === 'win32') {
-    try { app.setAppUserModelId('com.weeklog.desktop') } catch {}
+    try { app.setAppUserModelId(APP_ID) } catch {}
   }
   if (process.platform === 'darwin') {
     const dockIcon = nativeImage.createFromPath(getAppIconPath())
