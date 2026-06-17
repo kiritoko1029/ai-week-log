@@ -44,10 +44,8 @@ jobs:
 
       - name: Build & package app
         # dist:win / dist:mac 脚本已内含 build:renderer（Vite 打包渲染层）
+        # 只打包，不让 electron-builder 创建 GitHub Release；上传统一交给下方 action-gh-release
         run: pnpm run ${{ matrix.dist_script }}
-        env:
-          # electron-builder 自动更新元信息（latest*.yml）需要；此处仅打包
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts to workflow
         uses: actions/upload-artifact@v7

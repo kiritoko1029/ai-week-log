@@ -25,14 +25,22 @@ try {
   electronUpdater = require('electron-updater').autoUpdater
 } catch {}
 
-// 从 package.json 读 publish 配置（build.publish[0] = { provider, owner, repo }）
+const DEFAULT_GITHUB_PUBLISH = {
+  provider: 'github',
+  owner: 'kiritoko1029',
+  repo: 'ai-week-log',
+}
+
+// 从 package.json 读 publish 配置（build.publish[0] = { provider, owner, repo }）。
+// packaged app 中 package.json 可能不包含 build 配置，因此保留内置发布源兜底。
 function readPublishConfig() {
   try {
     const p = require('../../package.json')
-    const list = (p.build && p.build.publish) || []
-    return list.find((x) => x.provider === 'github') || list[0] || null
+    const raw = p.build && p.build.publish
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : []
+    return list.find((x) => x && x.provider === 'github') || DEFAULT_GITHUB_PUBLISH
   } catch {
-    return null
+    return DEFAULT_GITHUB_PUBLISH
   }
 }
 
@@ -231,7 +239,7 @@ function createUpdaterController(opts = {}) {
   async function macCheck() {
     const pub = readPublishConfig()
     if (!pub || pub.provider !== 'github' || !pub.owner || !pub.repo) {
-      return patch({ phase: 'error', error: '未配置 GitHub 发布源（build.publish）' })
+      return patch({ phase: 'error', error: '未配置 GitHub 更新源' })
     }
     const apiUrl = `https://api.github.com/repos/${pub.owner}/${pub.repo}/releases/latest`
     try {
