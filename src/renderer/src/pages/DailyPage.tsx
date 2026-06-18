@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
-import { Play, Plus, Loader2 } from 'lucide-react'
+import { Play, Plus, Loader2, MessageSquare } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
 import { useGenerate } from '@/hooks/useGenerate'
@@ -67,6 +67,12 @@ export function DailyPage() {
   // 当前日期下是否已有日报，用于展示「重新生成将覆盖」
   const rangeOpts = useMemo(() => ({ mode: 'daily' as const, date }), [date])
   const { existing, loading } = useExistingReport('日报', rangeOpts, { weekStart: config?.weekStart })
+
+  // 送入 AI 对话润色
+  const goRefine = useCallback(() => {
+    if (!displayReport) return
+    navigate('chat', { kind: 'reportRefine', reportText: displayReport, reportType: '日报' })
+  }, [displayReport, navigate])
 
   return (
     <div className="space-y-6">
@@ -141,7 +147,13 @@ export function DailyPage() {
             日报预览
             {converting && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
           </CardTitle>
-          {displayReport && <Badge variant="secondary">{date === 'today' ? '今天' : date === 'yesterday' ? '昨天' : date}</Badge>}
+          <div className="flex items-center gap-2">
+            {displayReport && <Badge variant="secondary">{date === 'today' ? '今天' : date === 'yesterday' ? '昨天' : date}</Badge>}
+            <Button variant="outline" size="sm" onClick={goRefine} disabled={!displayReport} className="text-violet-600 hover:text-violet-700">
+              <MessageSquare />
+              去对话润色
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {format === 'md' ? (

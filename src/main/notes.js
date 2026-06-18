@@ -138,6 +138,103 @@ function countNotes(notesDir, dateStr, miscProject) {
   return parseNoteText(text, dateStr, miscProject, '').length
 }
 
+/**
+ * 精简替换：从指定日期的笔记中移除被选中的若干条（按 date+project+content 精确匹配），
+ * 再追加一条合并后的精简笔记。用于时间线「AI 精简选中 → 直接替换」。
+ * @param {string} notesDir
+ * @param {Array<{date:string; project:string|null; content:string}>} removeItems 待移除的原始笔记
+ * @param {string} dateStr 精简笔记写入的日期
+ * @param {string} project 精简笔记写入的项目（空串=通用）
+ * @param {string} content 精简后的内容
+ * @param {string} miscProject
+ * @returns {{ files: string[] }} 受影响的笔记文件
+ */
+function replaceNotes(notesDir, removeItems, dateStr, project, content, miscProject = '日常工作') {
+  if (!fs.existsSync(notesDir)) fs.mkdirSync(notesDir, { recursive: true })
+  const line = String(content || '').trim()
+  // 按日期分组待移除项，逐文件处理
+  const byDate = new Map()
+  for (const it of removeItems || []) {
+    if (!it || !it.date) continue
+    if (!byDate.has(it.date)) byDate.set(it.date, [])
+    byDate.get(it.date).push({ project: it.project || null, content: String(it.content || '').trim() })
+  }
+  const files = []
+  for (const [d, items] of byDate) {
+    const file = noteFilePath(notesDir, d)
+    let text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
+    text = removeNoteLines(text, items, miscProject)
+    fs.writeFileSync(file, text, 'utf8')
+    files.push(file)
+  }
+  // 追加精简后的笔记到目标日期
+  if (line) {
+    const addedFile = appendNote(notesDir, dateStr, project, line, miscProject)
+    if (!files.includes(addedFile)) files.push(addedFile)
+  }
+  return { files }
+}
+
+/**
+ * 从笔记文本中移除匹配的笔记（按 project + 完整 content 匹配，content 可跨多行）。
+ * 用与 parseNoteText 一致的分段逻辑：每段下连续的非空行（直到空行或下个标题）= 一条笔记。
+ * 命中则丢弃整条；其余按原始段落顺序重组 markdown。
+ */
+function removeNoteLines(text, items, miscProject) {
+  const toRemove = new Set(
+    (items || [])
+      .filter((it) => it && it.content != null)
+      .map((it) => `${it.project === null ? miscProject : it.project}\u0000${String(it.content || '').trim()}`)
+  )
+  if (!toRemove.size) return text || ''
+
+  // 按 `## 标题` 分段，保留首次出现顺序；每段内按空行切成多条笔记
+  const lines = (text || '').split(/\r?\n/)
+  let curHeading = miscProject
+  /** @type {{heading: string, notes: string[]}[]} */
+  const sections = []
+  let curSection = null
+  let buffer = []
+  const flushSection = () => {
+    flushNote()
+    if (curSection && curSection.notes.length) sections.push(curSection)
+    curSection = null
+  }
+  const flushNote = () => {
+    const c = buffer.join('\n').trim()
+    buffer = []
+    if (!c) return
+    if (!curSection) curSection = { heading: curHeading, notes: [] }
+    curSection.notes.push(c)
+  }
+  for (const line of lines) {
+    const m = /^##\s+(.+?)\s*$/.exec(line)
+    if (m) {
+      flushSection()
+      curHeading = m[1].trim()
+      curSection = { heading: curHeading, notes: [] }
+      continue
+    }
+    if (line.trim() === '') {
+      flushNote()
+    } else {
+      buffer.push(line)
+    }
+  }
+  flushSection()
+
+  // 按原顺序重建：miscProject 段无标题；其余段保留 `## 标题`
+  const out = []
+  for (const sec of sections) {
+    const kept = sec.notes.filter((c) => !toRemove.has(`${sec.heading}\u0000${c}`))
+    if (!kept.length) continue
+    if (sec.heading !== miscProject) out.push(`## ${sec.heading}`)
+    for (const c of kept) out.push(c)
+    out.push('') // 段间空行
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '') + '\n'
+}
+
 // ── AI 精简：把多条笔记合并成一条精简中文小记（供时间线多选精简）──
 
 const NOTE_SUMMARY_SYSTEM = `你是一名研发工作小记整理助手。
@@ -186,6 +283,7 @@ module.exports = {
   appendNote,
   appendSegment,
   countNotes,
+  replaceNotes,
   summarizeNotes,
   NOTE_SUMMARY_SYSTEM,
 }

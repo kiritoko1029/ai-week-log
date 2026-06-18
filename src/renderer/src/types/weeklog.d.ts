@@ -50,6 +50,10 @@ export interface Config {
     enabled: boolean
     port: number
   }
+  zcodeHook: {
+    enabled: boolean
+    port: number
+  }
   ui: {
     theme: 'auto' | 'light' | 'dark'
     quickNoteShortcut: string
@@ -149,6 +153,69 @@ export interface CodexHookInstallResult {
   endpoint?: string
   error?: string
   status?: CodexHookInstallStatus
+}
+
+export interface ZcodePendingNote {
+  id: string
+  source: 'zcode'
+  status: 'pending' | 'written' | 'deleted'
+  cwd: string
+  project: string
+  summary: string
+  branch?: string
+  changedFiles: string[]
+  title?: string
+  createdAt: string
+  writtenAt?: string
+}
+
+export interface ZcodeHookStatus {
+  enabled: boolean
+  hasToken: boolean
+  running: boolean
+  host: string
+  port: number
+  endpoint: string
+  error: string
+  hookInstalled: boolean
+  hookRegistered: boolean
+  hookEnabled: boolean
+  hookCount: number
+  pluginPath: string
+  marketplacePath: string
+  configPath: string
+  hookError: string
+}
+
+export interface ZcodeHookCopyConfigResult {
+  enabled: boolean
+  endpoint: string
+  text: string
+}
+
+export interface ZcodeHookInstallStatus {
+  pluginPath: string
+  marketplacePath: string
+  configPath: string
+  exists: boolean
+  installed: boolean
+  registered: boolean
+  enabled: boolean
+  hookCount: number
+  error: string
+}
+
+export interface ZcodeHookInstallResult {
+  ok: boolean
+  installed?: boolean
+  removed?: number
+  pluginPath?: string
+  marketplacePath?: string
+  configPath?: string
+  backups?: string[]
+  endpoint?: string
+  error?: string
+  status?: ZcodeHookInstallStatus
 }
 
 export interface CollectStats {
@@ -330,6 +397,14 @@ export interface MemoryQueueStatus {
   pending: number
   total: number
   running: boolean
+}
+
+/** 写作偏好规则（报告生成时注入系统提示词） */
+export interface WritingPreference {
+  id: string
+  rule: string
+  enabled: boolean
+  createdAt: string
 }
 
 /** 记忆系统整体状态（模型 + 向量化进度聚合） */
@@ -520,6 +595,8 @@ export interface WeeklogAPI {
     saveText: (n: { date: string; text: string }) => Promise<{ ok: boolean }>
     list: (q: { from: string; to: string }) => Promise<Note[]>
     summarize: (items: Note[]) => Promise<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>
+    /** 精简替换：移除被选中的笔记，写入精简后的单条 */
+    replaceSummarized: (q: { removeItems: Note[]; date: string; project: string; content: string }) => Promise<{ files: string[] }>
   }
   report: {
     /** 在 compact / text / md 三种格式间互转（不调 AI，纯字符串解析+重渲染）。失败回退原文本。 */
@@ -534,6 +611,16 @@ export interface WeeklogAPI {
     copyConfig: () => Promise<CodexHookCopyConfigResult>
     installHook: () => Promise<CodexHookInstallResult>
     uninstallHook: () => Promise<CodexHookInstallResult>
+  }
+  zcodeNotes: {
+    list: () => Promise<ZcodePendingNote[]>
+    delete: (ids: string[]) => Promise<{ deleted: number }>
+    write: (q: { ids: string[]; project?: string; content?: string }) => Promise<{ written: number; files: string[] }>
+    summarize: (ids: string[]) => Promise<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>
+    status: () => Promise<ZcodeHookStatus>
+    copyConfig: () => Promise<ZcodeHookCopyConfigResult>
+    installHook: () => Promise<ZcodeHookInstallResult>
+    uninstallHook: () => Promise<ZcodeHookInstallResult>
   }
   collect: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<CollectResult>
   generate: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<Report>
@@ -571,14 +658,22 @@ export interface WeeklogAPI {
     remove: (id: string) => Promise<{ ok: boolean }>
     inferProject: (noteText: string) => Promise<MemoryInferResult>
   }
+  prefs: {
+    list: () => Promise<WritingPreference[]>
+    add: (rule: string) => Promise<{ item: WritingPreference | null }>
+    toggle: (id: string, enabled: boolean) => Promise<{ item: WritingPreference | null }>
+    remove: (id: string) => Promise<{ deleted: number }>
+    /** AI 对比修改前后文本，抽取一条通用写作规则（无规则则 rule 为空串） */
+    extract: (oldText: string, newText: string) => Promise<{ rule?: string; error?: string; model?: string; inputTokens?: number; outputTokens?: number }>
+  }
   chat: {
     sessions: () => Promise<ChatSessionMeta[]>
     getSession: (id: string) => Promise<ChatSession | null>
     createSession: (title?: string) => Promise<ChatSession>
     renameSession: (id: string, title: string) => Promise<{ ok: boolean; title?: string }>
     deleteSession: (id: string) => Promise<{ ok: boolean }>
-    /** 发起流式问答，立即返回 { msgId }，正文经 onStream 推送 */
-    send: (sessionId: string, content: string) => Promise<{ msgId?: string; error?: string }>
+    /** 发起流式问答，立即返回 { msgId }，正文经 onStream 推送。context 为额外上下文（如送入润色的报告文本） */
+    send: (sessionId: string, content: string, context?: string) => Promise<{ msgId?: string; error?: string }>
     generate: (
       sessionId: string,
       reportType: 'daily' | 'weekly',

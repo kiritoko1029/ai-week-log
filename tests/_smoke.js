@@ -1,11 +1,13 @@
 'use strict'
 /* 核心逻辑冒烟测试：验证 git 解析 / 笔记解析 / 聚合融合 / Prompt 组装 / 渲染，不依赖 electron。 */
+const fs = require('fs')
 const U = require('../src/main/utils')
 const G = require('../src/main/git')
 const N = require('../src/main/notes')
 const A = require('../src/main/aggregator')
 const L = require('../src/main/llm')
 const R = require('../src/main/render')
+const P = require('../src/main/preferences')
 
 const RS = '\x1e'
 const US = '\x1f'
@@ -57,6 +59,65 @@ ok('通用笔记 project=null', notesParsed[1].project === null && notesParsed[1
 {
   const seg = N.appendSegment('## 前端\n工作 A\n', '后端', '工作 C')
   ok('新建段追加', /## 后端\n工作 C/.test(seg), seg)
+}
+
+console.log('\n[3b] 笔记精简替换 replaceNotes（移除选中 + 追加精简）')
+{
+  const os = require('os')
+  const path = require('path')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-replace-'))
+  try {
+    // 用 saveNoteText 写出带空行分隔的笔记（单条笔记一行，条目间空行；与解析器分段一致）
+    fs.writeFileSync(
+      path.join(dir, '2026-06-09.md'),
+      '## 前端\n工作 A\n\n工作 B\n\n## 日常工作\n通用事项\n',
+      'utf8'
+    )
+    N.appendNote(dir, '2026-06-10', '前端', '工作 C', '日常工作')
+
+    // 选中 06-09 前端的两条，精简为一条写入 06-09 前端段
+    const removeItems = [
+      { date: '2026-06-09', project: '前端', content: '工作 A' },
+      { date: '2026-06-09', project: '前端', content: '工作 B' },
+    ]
+    N.replaceNotes(dir, removeItems, '2026-06-09', '前端', '前端精简摘要', '日常工作')
+
+    const after = N.loadNotes(dir, '2026-06-09', '2026-06-10', '日常工作')
+    const day9 = after.filter((n) => n.date === '2026-06-09')
+    ok('原工作 A 已移除', !day9.some((n) => n.content === '工作 A'))
+    ok('原工作 B 已移除', !day9.some((n) => n.content === '工作 B'))
+    ok('精简摘要已写入', day9.some((n) => n.project === '前端' && n.content === '前端精简摘要'))
+    ok('未选中的通用事项保留', day9.some((n) => n.project === null && n.content === '通用事项'))
+    ok('其他日期笔记不受影响', after.some((n) => n.date === '2026-06-10' && n.content === '工作 C'))
+    // 精简后 06-09 前端段应只剩 1 条（精简摘要），通用段 1 条
+    ok('06-09 前端段仅 1 条', day9.filter((n) => n.project === '前端').length === 1, 'count=' + day9.filter((n) => n.project === '前端').length)
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
+  }
+}
+
+console.log('\n[3c] 多行笔记替换（模拟 Codex hook 导入的 summary + 元信息行）')
+{
+  const os = require('os')
+  const path = require('path')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-multi-'))
+  try {
+    // 模拟 Codex hook 写入的多行笔记：summary 行 + （Codex 自动小记；…）行
+    const file = path.join(dir, '2026-06-18.md')
+    const multiContent = '修复了登录态丢失的 bug\n（Codex 自动小记；分支：main；改动文件：src/a.py）'
+    fs.writeFileSync(file, `## 前端\n${multiContent}\n\n## 后端\n优化了查询性能\n`, 'utf8')
+
+    const before = N.loadNotes(dir, '2026-06-18', '2026-06-18', '日常工作')
+    ok('多行笔记被解析为单条', before.length === 2 && before[0].content === multiContent, JSON.stringify(before[0].content))
+
+    N.replaceNotes(dir, [before[0]], '2026-06-18', '前端', '前端精简小记', '日常工作')
+    const after = N.loadNotes(dir, '2026-06-18', '2026-06-18', '日常工作')
+    ok('原多行笔记已移除', !after.some((n) => n.content.includes('登录态丢失')))
+    ok('精简已写入', after.some((n) => n.project === '前端' && n.content === '前端精简小记'))
+    ok('后端笔记保留', after.some((n) => n.project === '后端' && n.content === '优化了查询性能'))
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
+  }
 }
 
 console.log('\n[4] 聚合 + 笔记融合 + 别名')
@@ -163,6 +224,45 @@ console.log('\n[10] convertFormat 容错')
   ok('无法解析回退原文', R.convertFormat(garbage, { from: 'text', to: 'compact' }) === garbage)
   ok('空文本安全', R.convertFormat('', { from: 'text', to: 'md' }) === '')
   ok('同格式原样返回', R.convertFormat('abc', { from: 'text', to: 'text' }) === 'abc')
+}
+
+console.log('\n[11] 写作偏好库 preferences + buildSystemPrompt 注入')
+{
+  const os = require('os')
+  const path = require('path')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wl-prefs-'))
+  try {
+    // 空：无规则
+    ok('初始无偏好', P.listPreferences(dir).length === 0)
+    ok('enabledRules 空返回 []', P.enabledRules(dir).length === 0)
+
+    // 增删启用切换
+    const a = P.addPreference(dir, '用「灰度发布」代替「上线」')
+    const b = P.addPreference(dir, '  ') // 空规则忽略
+    ok('addPreference 返回项', !!a && a.enabled && a.rule.includes('灰度发布'))
+    ok('空规则被忽略', b === null)
+    ok('listPreferences 含 1 条', P.listPreferences(dir).length === 1)
+    ok('enabledRules 返回规则文本', P.enabledRules(dir).length === 1 && P.enabledRules(dir)[0].includes('灰度发布'))
+
+    // 禁用后 enabledRules 不含
+    P.togglePreference(dir, a.id, false)
+    ok('禁用后 enabledRules 为空', P.enabledRules(dir).length === 0)
+    ok('listPreferences 仍含禁用项', P.listPreferences(dir).length === 1 && P.listPreferences(dir)[0].enabled === false)
+
+    // 删除
+    const rm = P.removePreference(dir, a.id)
+    ok('removePreference 删除', rm.deleted === 1 && P.listPreferences(dir).length === 0)
+  } finally {
+    try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
+  }
+
+  // buildSystemPrompt 注入
+  const base = L.buildSystemPrompt([])
+  const withPrefs = L.buildSystemPrompt(['用「灰度发布」代替「上线」', '语气更口语化'])
+  ok('无偏好等价于 BASE', base === L.SYSTEM_PROMPT_BASE, 'base mismatch')
+  ok('有偏好含注入段', withPrefs.includes('【用户写作偏好（请严格遵守）】'), withPrefs)
+  ok('注入含规则文本', withPrefs.includes('- 用「灰度发布」代替「上线」') && withPrefs.includes('- 语气更口语化'), withPrefs)
+  ok('空/无效规则不注入', L.buildSystemPrompt(['', '   ', null]).indexOf('用户写作偏好') === -1)
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败\n`)

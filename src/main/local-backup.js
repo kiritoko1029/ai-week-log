@@ -22,6 +22,8 @@ const CONFIG_BACKUP_FIELDS = [
   ['notes', 'miscProject'],
   ['codexHook', 'enabled'],
   ['codexHook', 'port'],
+  ['zcodeHook', 'enabled'],
+  ['zcodeHook', 'port'],
   ['ui', 'theme'],
   ['ai', 'provider'],
   ['ai', 'concurrency'],

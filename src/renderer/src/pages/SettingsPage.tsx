@@ -18,7 +18,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Tabs, TabsListUnderline, TabsTriggerUnderline, TabsContent } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
-import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus, WebdavBackupInfo, CodexHookStatus } from '@/types/weeklog'
+import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus, WebdavBackupInfo, CodexHookStatus, ZcodeHookStatus, WritingPreference } from '@/types/weeklog'
 
 export function SettingsPage() {
   const { config, save, refresh: refreshConfig } = useConfig()
@@ -51,6 +51,30 @@ export function SettingsPage() {
   const [rebuildingMem, setRebuildingMem] = useState(false)
   const [memDialogOpen, setMemDialogOpen] = useState(false)
 
+  // 写作偏好（报告生成注入）
+  const [prefs, setPrefs] = useState<WritingPreference[]>([])
+  const [newPref, setNewPref] = useState('')
+  const loadPrefs = useCallback(async () => {
+    try { setPrefs(await api.prefs.list()) } catch {}
+  }, [])
+  const addPref = useCallback(async () => {
+    const rule = newPref.trim()
+    if (!rule) return
+    await api.prefs.add(rule)
+    setNewPref('')
+    await loadPrefs()
+    toast.success('已添加写作偏好')
+  }, [newPref, loadPrefs])
+  const togglePref = useCallback(async (id: string, enabled: boolean) => {
+    await api.prefs.toggle(id, enabled)
+    await loadPrefs()
+  }, [loadPrefs])
+  const removePref = useCallback(async (id: string) => {
+    await api.prefs.remove(id)
+    await loadPrefs()
+    toast.success('已删除')
+  }, [loadPrefs])
+
   // 应用更新
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
@@ -60,6 +84,10 @@ export function SettingsPage() {
   const [copyingCodexHookConfig, setCopyingCodexHookConfig] = useState(false)
   const [installingCodexHook, setInstallingCodexHook] = useState(false)
   const [uninstallingCodexHook, setUninstallingCodexHook] = useState(false)
+  const [zcodeHookStatus, setZcodeHookStatus] = useState<ZcodeHookStatus | null>(null)
+  const [copyingZcodeHookConfig, setCopyingZcodeHookConfig] = useState(false)
+  const [installingZcodeHook, setInstallingZcodeHook] = useState(false)
+  const [uninstallingZcodeHook, setUninstallingZcodeHook] = useState(false)
 
   const recorder = useShortcutRecorder(config?.ui?.quickNoteShortcut || 'CommandOrControl+Shift+L')
 
@@ -82,7 +110,8 @@ export function SettingsPage() {
   useEffect(() => {
     api.webdav.passwordStatus().then((r) => setHasStoredWebdavPassword(r.hasPassword))
     api.webdav.status().then(setWebdavStatus)
-  }, [])
+    loadPrefs()
+  }, [loadPrefs])
 
   // 加载记忆列表 + 队列状态（记忆弹窗打开时刷新）
   useEffect(() => {
@@ -112,9 +141,14 @@ export function SettingsPage() {
     api.codexNotes.status().then(setCodexHookStatus).catch(() => {})
   }, [])
 
+  const refreshZcodeHookStatus = useCallback(() => {
+    api.zcodeNotes.status().then(setZcodeHookStatus).catch(() => {})
+  }, [])
+
   useEffect(() => {
     refreshCodexHookStatus()
-  }, [refreshCodexHookStatus])
+    refreshZcodeHookStatus()
+  }, [refreshCodexHookStatus, refreshZcodeHookStatus])
 
   const patch = useCallback((updater: (c: Config) => void) => {
     setDraft((prev) => {
@@ -179,9 +213,10 @@ export function SettingsPage() {
     await save(draft)
     const sr = await api.shortcut.apply()
     refreshCodexHookStatus()
+    refreshZcodeHookStatus()
     if (sr && !sr.ok) toast.warning('快捷键可能被占用，已回退默认')
     else toast.success('设置已保存')
-  }, [draft, apiKey, webdavPassword, recorder.accel, save, refreshCodexHookStatus])
+  }, [draft, apiKey, webdavPassword, recorder.accel, save, refreshCodexHookStatus, refreshZcodeHookStatus])
 
   // WebDAV：测试连接
   const testWebdav = useCallback(async () => {
@@ -410,6 +445,64 @@ export function SettingsPage() {
     }
   }, [refreshCodexHookStatus])
 
+  const copyZcodeHookConfig = useCallback(async () => {
+    if (!draft) return
+    setCopyingZcodeHookConfig(true)
+    try {
+      await save(draft)
+      const r = await api.zcodeNotes.copyConfig()
+      await navigator.clipboard.writeText(r.text)
+      refreshZcodeHookStatus()
+      toast.success('ZCode hook 配置片段已复制')
+    } catch (e: any) {
+      toast.error('复制失败', { description: e?.message || '未知错误' })
+    } finally {
+      setCopyingZcodeHookConfig(false)
+    }
+  }, [draft, save, refreshZcodeHookStatus])
+
+  const installZcodeHook = useCallback(async () => {
+    if (!draft) return
+    setInstallingZcodeHook(true)
+    try {
+      await save(draft)
+      const r = await api.zcodeNotes.installHook()
+      const nextCfg = await refreshConfig()
+      setDraft(structuredClone(nextCfg))
+      refreshZcodeHookStatus()
+      if (r.ok) {
+        toast.success('ZCode Hook 已安装', {
+          description: r.pluginPath,
+        })
+      } else {
+        toast.error('安装失败', { description: r.error || '未知错误' })
+      }
+    } catch (e: any) {
+      toast.error('安装失败', { description: e?.message || '未知错误' })
+    } finally {
+      setInstallingZcodeHook(false)
+    }
+  }, [draft, save, refreshConfig, refreshZcodeHookStatus])
+
+  const uninstallZcodeHook = useCallback(async () => {
+    setUninstallingZcodeHook(true)
+    try {
+      const r = await api.zcodeNotes.uninstallHook()
+      refreshZcodeHookStatus()
+      if (r.ok) {
+        toast.success(r.removed ? 'ZCode Hook 已卸载' : '未发现 WeekLog 管理的 ZCode 插件', {
+          description: r.backups && r.backups.length ? `已备份：${r.backups.join('、')}` : r.pluginPath,
+        })
+      } else {
+        toast.error('卸载失败', { description: r.error || '未知错误' })
+      }
+    } catch (e: any) {
+      toast.error('卸载失败', { description: e?.message || '未知错误' })
+    } finally {
+      setUninstallingZcodeHook(false)
+    }
+  }, [refreshZcodeHookStatus])
+
   if (!draft) {
     return <div className="py-8 text-center text-sm text-muted-foreground">加载配置中…</div>
   }
@@ -567,92 +660,180 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Codex hook 小记 */}
+      {/* Hook 小记（Codex / ZCode） */}
       <Card className="border-l-4 border-l-fuchsia-500">
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>Codex Hook 小记</CardTitle>
-          <Badge variant={codexHookStatus?.running ? 'success' : draft.codexHook.enabled ? 'destructive' : 'secondary'}>
-            {codexHookStatus?.running ? '运行中' : draft.codexHook.enabled ? '未运行' : '未启用'}
+          <CardTitle>Hook 小记</CardTitle>
+          <Badge variant={(codexHookStatus?.running || zcodeHookStatus?.running) ? 'success' : (draft.codexHook.enabled || draft.zcodeHook.enabled) ? 'destructive' : 'secondary'}>
+            {(codexHookStatus?.running || zcodeHookStatus?.running) ? '运行中' : (draft.codexHook.enabled || draft.zcodeHook.enabled) ? '未运行' : '未启用'}
           </Badge>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between gap-3 py-2">
-            <div>
-              <h4 className="text-sm font-semibold">允许 Codex 写入待处理小记池</h4>
-              <p className="text-xs text-muted-foreground">开启后只接受本机 loopback + token 请求，内容先进入待处理池。</p>
-            </div>
-            <Switch
-              checked={draft.codexHook.enabled}
-              onCheckedChange={(v) => patch((c) => { c.codexHook.enabled = v })}
-            />
-          </div>
-          <div className="flex flex-wrap gap-4">
-            <div className="min-w-[140px] space-y-1.5">
-              <Label>本地端口</Label>
-              <Input
-                type="number"
-                min={1024}
-                max={65535}
-                value={draft.codexHook.port}
-                onChange={(e) => patch((c) => { c.codexHook.port = Number(e.target.value) || 17321 })}
-              />
-            </div>
-            <div className="min-w-[260px] flex-1 space-y-1.5">
-              <Label>接口地址</Label>
-              <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-                {codexHookStatus?.endpoint || `http://127.0.0.1:${draft.codexHook.port}/api/codex/pending-notes`}
-              </p>
+        <CardContent className="space-y-5">
+          <div className="space-y-2">
+            <h4 className="text-sm font-semibold">允许写入待处理小记池（可多选）</h4>
+            <p className="text-xs text-muted-foreground">开启后只接受本机 loopback + token 请求，内容先进入待处理池，确认后再写入正式笔记。</p>
+            <div className="flex flex-wrap items-center gap-6 pt-1">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-violet-600"
+                  checked={draft.codexHook.enabled}
+                  onChange={(e) => patch((c) => { c.codexHook.enabled = e.target.checked })}
+                />
+                Codex
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-violet-600"
+                  checked={draft.zcodeHook.enabled}
+                  onChange={(e) => patch((c) => { c.zcodeHook.enabled = e.target.checked })}
+                />
+                ZCode
+              </label>
             </div>
           </div>
-          <div className="flex flex-wrap gap-4">
-            <div className="min-w-[160px] space-y-1.5">
-              <Label>Codex Hook</Label>
+
+          <Separator />
+
+          {/* Codex 区 */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-semibold">Codex</h4>
               <Badge variant={codexHookStatus?.hookInstalled ? 'success' : 'secondary'}>
-                {codexHookStatus?.hookInstalled ? `已安装${codexHookStatus.hookCount > 1 ? ` × ${codexHookStatus.hookCount}` : ''}` : '未安装'}
+                {codexHookStatus?.hookInstalled ? `Hook 已安装${codexHookStatus.hookCount > 1 ? ` × ${codexHookStatus.hookCount}` : ''}` : 'Hook 未安装'}
               </Badge>
             </div>
-            <div className="min-w-[260px] flex-1 space-y-1.5">
+            <div className="flex flex-wrap gap-4">
+              <div className="min-w-[120px] space-y-1.5">
+                <Label>本地端口</Label>
+                <Input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={draft.codexHook.port}
+                  onChange={(e) => patch((c) => { c.codexHook.port = Number(e.target.value) || 17321 })}
+                />
+              </div>
+              <div className="min-w-[260px] flex-1 space-y-1.5">
+                <Label>接口地址</Label>
+                <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                  {codexHookStatus?.endpoint || `http://127.0.0.1:${draft.codexHook.port}/api/codex/pending-notes`}
+                </p>
+              </div>
+            </div>
+            <div className="space-y-1.5">
               <Label>配置文件</Label>
               <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
                 {codexHookStatus?.hooksPath || '~/.codex/hooks.json'}
               </p>
             </div>
+            {codexHookStatus?.error && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                {codexHookStatus.error}
+              </div>
+            )}
+            {codexHookStatus?.hookError && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                {codexHookStatus.hookError}
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" onClick={installCodexHook} disabled={installingCodexHook || !draft.codexHook.enabled}>
+                {installingCodexHook ? <RefreshCw className="animate-spin" /> : <Zap />}
+                一键安装 Hook
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={uninstallCodexHook}
+                disabled={uninstallingCodexHook || !codexHookStatus?.hookInstalled}
+              >
+                {uninstallingCodexHook ? <RefreshCw className="animate-spin" /> : <Trash2 />}
+                卸载
+              </Button>
+              <Button type="button" variant="outline" onClick={copyCodexHookConfig} disabled={!draft.codexHook.enabled || copyingCodexHookConfig}>
+                {copyingCodexHookConfig ? <RefreshCw className="animate-spin" /> : <Copy />}
+                复制配置片段
+              </Button>
+            </div>
           </div>
-          {codexHookStatus?.error && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-              {codexHookStatus.error}
+
+          <Separator />
+
+          {/* ZCode 区 */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-semibold">ZCode</h4>
+              <Badge variant={zcodeHookStatus?.hookInstalled && zcodeHookStatus?.hookEnabled ? 'success' : zcodeHookStatus?.hookInstalled ? 'secondary' : 'secondary'}>
+                {zcodeHookStatus?.hookInstalled ? (zcodeHookStatus.hookEnabled ? '插件已安装并启用' : '插件已安装未启用') : '插件未安装'}
+              </Badge>
             </div>
-          )}
-          {codexHookStatus?.hookError && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-              {codexHookStatus.hookError}
+            <div className="flex flex-wrap gap-4">
+              <div className="min-w-[120px] space-y-1.5">
+                <Label>本地端口</Label>
+                <Input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={draft.zcodeHook.port}
+                  onChange={(e) => patch((c) => { c.zcodeHook.port = Number(e.target.value) || 17322 })}
+                />
+              </div>
+              <div className="min-w-[260px] flex-1 space-y-1.5">
+                <Label>接口地址</Label>
+                <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                  {zcodeHookStatus?.endpoint || `http://127.0.0.1:${draft.zcodeHook.port}/api/zcode/pending-notes`}
+                </p>
+              </div>
             </div>
-          )}
+            <div className="space-y-1.5">
+              <Label>插件路径</Label>
+              <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                {zcodeHookStatus?.pluginPath || '~/.zcode/cli/plugins/cache/weeklog-hooks/weeklog-pending-note'}
+              </p>
+            </div>
+            {zcodeHookStatus?.error && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                {zcodeHookStatus.error}
+              </div>
+            )}
+            {zcodeHookStatus?.hookError && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                {zcodeHookStatus.hookError}
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" onClick={installZcodeHook} disabled={installingZcodeHook || !draft.zcodeHook.enabled}>
+                {installingZcodeHook ? <RefreshCw className="animate-spin" /> : <Zap />}
+                一键安装 Hook
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={uninstallZcodeHook}
+                disabled={uninstallingZcodeHook || !zcodeHookStatus?.hookInstalled}
+              >
+                {uninstallingZcodeHook ? <RefreshCw className="animate-spin" /> : <Trash2 />}
+                卸载
+              </Button>
+              <Button type="button" variant="outline" onClick={copyZcodeHookConfig} disabled={!draft.zcodeHook.enabled || copyingZcodeHookConfig}>
+                {copyingZcodeHookConfig ? <RefreshCw className="animate-spin" /> : <Copy />}
+                复制配置片段
+              </Button>
+            </div>
+          </div>
+
+          <Separator />
+
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" onClick={installCodexHook} disabled={installingCodexHook}>
-              {installingCodexHook ? <RefreshCw className="animate-spin" /> : <Zap />}
-              一键安装 Hook
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={uninstallCodexHook}
-              disabled={uninstallingCodexHook || !codexHookStatus?.hookInstalled}
-            >
-              {uninstallingCodexHook ? <RefreshCw className="animate-spin" /> : <Trash2 />}
-              一键卸载 Hook
-            </Button>
-            <Button type="button" variant="outline" onClick={copyCodexHookConfig} disabled={!draft.codexHook.enabled || copyingCodexHookConfig}>
-              {copyingCodexHookConfig ? <RefreshCw className="animate-spin" /> : <Copy />}
-              复制 Codex 配置片段
-            </Button>
-            <Button type="button" variant="ghost" onClick={refreshCodexHookStatus}>
+            <Button type="button" variant="ghost" onClick={() => { refreshCodexHookStatus(); refreshZcodeHookStatus() }}>
               <RefreshCw />
               刷新状态
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Token 仅保存在本机密钥存储中，不在界面展示明文。一键安装会把 token 写入本机 Codex hooks.json；复制配置片段会把 token 写入剪贴板。
+            Token 仅保存在本机密钥存储中，不在界面展示明文。一键安装会把 token 写入对应工具的配置（Codex 写 hooks.json；ZCode 写用户目录插件包）；复制配置片段会把 token 写入剪贴板。
           </p>
         </CardContent>
       </Card>
@@ -816,6 +997,46 @@ export function SettingsPage() {
               </div>
             </div>
           </details>
+        </CardContent>
+      </Card>
+
+      {/* 写作偏好：报告生成时注入系统提示词 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>写作偏好</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            AI 生成日报/周报时将严格遵守这些规则。在对话里润色报告后点「记住这个调整」也会自动写入此处。
+          </p>
+          <div className="flex gap-2">
+            <Input
+              value={newPref}
+              onChange={(e) => setNewPref(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addPref()}
+              placeholder="如：用「灰度发布」代替「上线」；不要以「完成了」开头"
+            />
+            <Button onClick={addPref} disabled={!newPref.trim()} className="bg-violet-600 text-white hover:bg-violet-600/90">
+              添加
+            </Button>
+          </div>
+          {prefs.length === 0 ? (
+            <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+              暂无写作偏好
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {prefs.map((p) => (
+                <div key={p.id} className="flex items-center gap-2 rounded-md border bg-card p-2.5">
+                  <Switch checked={p.enabled} onCheckedChange={(v) => togglePref(p.id, v)} />
+                  <span className={cn('flex-1 text-sm', !p.enabled && 'text-muted-foreground line-through')}>{p.rule}</span>
+                  <Button variant="ghost" size="sm" onClick={() => removePref(p.id)} className="h-7 px-2 text-muted-foreground hover:text-destructive">
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
         </TabsContent>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, History as HistoryIcon, Loader2 } from 'lucide-react'
+import { Eye, History as HistoryIcon, Loader2, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { cn, codeSurface } from '@/lib/utils'
@@ -10,9 +10,11 @@ import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { detectFormat } from '@/lib/reportFormat'
+import { useNav } from '@/hooks/useNav'
 import type { HistoryEntry, ReportFormat } from '@/types/weeklog'
 
 export function HistoryPage() {
+  const { navigate } = useNav()
   const [list, setList] = useState<HistoryEntry[]>([])
   const [selected, setSelected] = useState<HistoryEntry | null>(null)
   // 编辑态：弹窗内的可编辑文本
@@ -57,6 +59,20 @@ export function HistoryPage() {
     },
     [editText, lastFmt]
   )
+
+  // 送入 AI 对话润色（以当前编辑文本为准）
+  const goRefine = useCallback(() => {
+    if (!editText || !selected) return
+    navigate('chat', {
+      kind: 'reportRefine',
+      reportText: editText,
+      reportType: selected.type,
+      historyId: selected.id,
+      rangeStart: selected.rangeStart,
+      rangeEnd: selected.rangeEnd,
+    })
+    setSelected(null)
+  }, [editText, selected, navigate])
 
   const saveEdit = useCallback(async () => {
     if (!selected) return
@@ -176,6 +192,15 @@ export function HistoryPage() {
             className={cn(codeSurface, 'max-h-[50vh] min-h-[200px] w-full resize-y p-4 outline-none focus:ring-2 focus:ring-ring')}
           />
           <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={goRefine}
+              disabled={!editText}
+              className="text-violet-600 hover:text-violet-700"
+            >
+              <MessageSquare />
+              去对话润色
+            </Button>
             <Button
               variant="outline"
               onClick={() => {

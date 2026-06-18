@@ -19,8 +19,11 @@ const { checkGit, isGitRepo, currentBranch, scanGitRepos } = require('./git')
 const { testProvider } = require('./llm')
 const render = require('./render')
 const notes = require('./notes')
+const preferences = require('./preferences')
 const codexPendingNotes = require('./codex-pending-notes')
 const codexHookConfig = require('./codex-hook-config')
+const zcodePendingNotes = require('./zcode-pending-notes')
+const zcodeHookConfig = require('./zcode-hook-config')
 const secrets = require('./secrets')
 const { collect, generate } = require('./pipeline')
 const { isoDate } = require('./utils')
@@ -75,7 +78,7 @@ function normalizeSecretProvider(provider, fallback) {
   return SECRET_PROVIDERS.has(p) ? p : fallback
 }
 
-function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
+function registerIpc({ app, getMainWindow, updater, codexHookServer, zcodeHookServer }) {
   const userDataDir = app.getPath('userData')
   const logger = createLogger(userDataDir)
   const getConfig = () => loadConfig(userDataDir)
@@ -83,6 +86,7 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
     const next = mergeConfig(defaultConfig(), cfg)
     saveConfig(userDataDir, next)
     if (next.codexHook && next.codexHook.enabled) ensureCodexHookToken()
+    if (next.zcodeHook && next.zcodeHook.enabled) ensureZcodeHookToken()
     return getConfig()
   }
   const getNotesDir = () => {
@@ -150,12 +154,14 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
     const saved = persist(cfg)
     applyProxy(saved, logger)
     if (codexHookServer && typeof codexHookServer.applyConfig === 'function') await codexHookServer.applyConfig()
+    if (zcodeHookServer && typeof zcodeHookServer.applyConfig === 'function') await zcodeHookServer.applyConfig()
     return saved
   })
   ipcMain.handle('config:reset', async () => {
     const saved = persist(defaultConfig())
     applyProxy(saved, logger)
     if (codexHookServer && typeof codexHookServer.applyConfig === 'function') await codexHookServer.applyConfig()
+    if (zcodeHookServer && typeof zcodeHookServer.applyConfig === 'function') await zcodeHookServer.applyConfig()
     return saved
   })
   ipcMain.handle('config:notesDir', () => getNotesDir())
@@ -258,6 +264,12 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
     const provider = require('./llm').createProvider(cfg, key)
     return notes.summarizeNotes(items || [], { provider })
   })
+  // 精简替换：移除被选中的若干条笔记，写入精简后的单条
+  ipcMain.handle('notes:replaceSummarized', (_e, { removeItems, date, project, content } = {}) => {
+    const cfg = getConfig()
+    const r = notes.replaceNotes(getNotesDir(), removeItems || [], date, project, content, cfg.notes.miscProject)
+    return { files: r.files.map((f) => path.relative(userDataDir, f)) }
+  })
 
   // ── 报告格式互转（不调 AI，纯字符串解析 + 重渲染）──
   ipcMain.handle('report:convert', (_e, { text, from, to, newline } = {}) => {
@@ -267,6 +279,25 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
       // 转换异常回退原文本，保证不丢内容
       return { text: String(text || '') }
     }
+  })
+
+  // ── 写作偏好（报告生成注入 + 对话润色后记住调整）──
+  ipcMain.handle('prefs:list', () => preferences.listPreferences(userDataDir))
+  ipcMain.handle('prefs:add', (_e, { rule } = {}) => {
+    const item = preferences.addPreference(userDataDir, rule)
+    return { item }
+  })
+  ipcMain.handle('prefs:toggle', (_e, { id, enabled } = {}) => {
+    const item = preferences.togglePreference(userDataDir, id, enabled)
+    return { item }
+  })
+  ipcMain.handle('prefs:remove', (_e, { id } = {}) => preferences.removePreference(userDataDir, id))
+  ipcMain.handle('prefs:extract', async (_e, { oldText, newText } = {}) => {
+    const cfg = getConfig()
+    const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
+    if (!has) return { error: '未配置 AI API Key' }
+    const provider = require('./llm').createProvider(cfg, key)
+    return preferences.extractRuleFromDiff({ oldText, newText, provider })
   })
 
   // ── Codex hook 待处理小记 ──
@@ -378,6 +409,118 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
     return {
       ...result,
       status: codexHookInstallStatus(),
+    }
+  })
+
+  // ── ZCode hook 待处理小记 ──
+  function ensureZcodeHookToken() {
+    let token = secrets.getKey(userDataDir, 'zcodeHook')
+    if (!token) {
+      token = crypto.randomBytes(32).toString('hex')
+      secrets.setKey(userDataDir, 'zcodeHook', token)
+    }
+    return token
+  }
+
+  function zcodeHookEndpoint() {
+    const cfg = getConfig()
+    const status = zcodeHookServer && typeof zcodeHookServer.status === 'function'
+      ? zcodeHookServer.status()
+      : { running: false, host: '127.0.0.1', port: cfg.zcodeHook && cfg.zcodeHook.port, error: '服务未初始化' }
+    const port = status.port || (cfg.zcodeHook && cfg.zcodeHook.port) || 17322
+    return `http://127.0.0.1:${port}/api/zcode/pending-notes`
+  }
+
+  async function prepareZcodeHookIntegration() {
+    const token = ensureZcodeHookToken()
+    if (zcodeHookServer && typeof zcodeHookServer.applyConfig === 'function') {
+      await zcodeHookServer.applyConfig()
+    }
+    const endpoint = zcodeHookEndpoint()
+    return { endpoint, token }
+  }
+
+  function zcodeHookInstallStatus() {
+    return zcodeHookConfig.getZcodeHookInstallStatus()
+  }
+
+  ipcMain.handle('zcodeNotes:list', () => zcodePendingNotes.listPendingNotes(userDataDir))
+  ipcMain.handle('zcodeNotes:delete', (_e, { ids } = {}) => zcodePendingNotes.deletePendingNotes(userDataDir, ids || []))
+  ipcMain.handle('zcodeNotes:write', (_e, { ids, project, content } = {}) => {
+    const cfg = getConfig()
+    return zcodePendingNotes.writePendingNotes(userDataDir, {
+      ids: ids || [],
+      notesDir: getNotesDir(),
+      miscProject: cfg.notes.miscProject,
+      project,
+      content,
+    })
+  })
+  ipcMain.handle('zcodeNotes:summarize', async (_e, { ids } = {}) => {
+    const cfg = getConfig()
+    const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
+    if (!has) return { error: '未配置 AI API Key' }
+    const provider = require('./llm').createProvider(cfg, key)
+    return zcodePendingNotes.summarizePendingNotes(userDataDir, { ids: ids || [], provider })
+  })
+  ipcMain.handle('zcodeHook:status', () => {
+    const cfg = getConfig()
+    const status = zcodeHookServer && typeof zcodeHookServer.status === 'function'
+      ? zcodeHookServer.status()
+      : { running: false, host: '127.0.0.1', port: 0, error: '服务未初始化' }
+    const installStatus = zcodeHookInstallStatus()
+    return {
+      enabled: !!(cfg.zcodeHook && cfg.zcodeHook.enabled),
+      hasToken: secrets.hasKey(userDataDir, 'zcodeHook'),
+      endpoint: zcodeHookEndpoint(),
+      hookInstalled: installStatus.installed,
+      hookRegistered: installStatus.registered,
+      hookEnabled: installStatus.enabled,
+      hookCount: installStatus.hookCount,
+      pluginPath: installStatus.pluginPath,
+      marketplacePath: installStatus.marketplacePath,
+      configPath: installStatus.configPath,
+      hookError: installStatus.error,
+      ...status,
+    }
+  })
+  ipcMain.handle('zcodeHook:copyConfig', async () => {
+    const cfg = getConfig()
+    const token = ensureZcodeHookToken()
+    if (zcodeHookServer && typeof zcodeHookServer.applyConfig === 'function') {
+      await zcodeHookServer.applyConfig()
+    }
+    const endpoint = zcodeHookEndpoint()
+    const text = zcodeHookConfig.buildZcodeHookSnippet({ endpoint, token })
+    return {
+      enabled: !!(cfg.zcodeHook && cfg.zcodeHook.enabled),
+      endpoint,
+      text,
+    }
+  })
+  ipcMain.handle('zcodeHook:install', async () => {
+    const cfg = getConfig()
+    if (!(cfg.zcodeHook && cfg.zcodeHook.enabled)) {
+      cfg.zcodeHook = cfg.zcodeHook || {}
+      cfg.zcodeHook.enabled = true
+      persist(cfg)
+      if (zcodeHookServer && typeof zcodeHookServer.applyConfig === 'function') {
+        await zcodeHookServer.applyConfig()
+      }
+    }
+    const { endpoint, token } = await prepareZcodeHookIntegration()
+    const result = zcodeHookConfig.installZcodeHook({ endpoint, token })
+    return {
+      ...result,
+      endpoint,
+      status: zcodeHookInstallStatus(),
+    }
+  })
+  ipcMain.handle('zcodeHook:uninstall', () => {
+    const result = zcodeHookConfig.uninstallZcodeHook()
+    return {
+      ...result,
+      status: zcodeHookInstallStatus(),
     }
   })
 
@@ -667,7 +810,7 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
     }
     return { ok: false }
   })
-  ipcMain.handle('chat:send', (_e, { sessionId, content } = {}) => {
+  ipcMain.handle('chat:send', (_e, { sessionId, content, context } = {}) => {
     if (!sessionId || !content || !content.trim()) return { error: '缺少会话或内容' }
     const cfg = getConfig()
     const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
@@ -698,6 +841,7 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
         apiKey: key,
         sessionId,
         content,
+        context,
         history: readHistory(userDataDir),
         notesDir: getNotesDir(),
         searchMemory: (q, k) => memory.search(userDataDir, q, { topK: k, cfg }),

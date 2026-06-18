@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Play, Eye, Copy, Download, RefreshCw, Loader2, Pencil, Check } from 'lucide-react'
+import { Play, Eye, Copy, Download, RefreshCw, Loader2, Pencil, Check, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { cn, codeSurface } from '@/lib/utils'
 import { useConfig } from '@/hooks/useConfig'
 import { useGenerate } from '@/hooks/useGenerate'
 import { useExistingReport } from '@/hooks/useExistingReport'
+import { useNav } from '@/hooks/useNav'
 import { todayISO } from '@/lib/dates'
 import { ReportPreview } from '@/components/ReportPreview'
 import { ExistingReportCard } from '@/components/ExistingReportCard'
@@ -27,6 +28,7 @@ type RangePreset = 'thisweek' | 'lastweek' | 'custom'
 export function GeneratePage() {
   const { config } = useConfig()
   const gen = useGenerate()
+  const { navigate } = useNav()
 
   const [mode, setMode] = useState<Mode>('weekly')
   const [preset, setPreset] = useState<RangePreset>('thisweek')
@@ -160,6 +162,17 @@ export function GeneratePage() {
     },
     [editText, displayReport, editing, lastRenderedFormat]
   )
+
+  // 送入 AI 对话润色：携带当前报告文本作为隐藏上下文
+  const goRefine = useCallback(() => {
+    const text = editing ? editText : displayReport
+    if (!text) return
+    navigate('chat', {
+      kind: 'reportRefine',
+      reportText: text,
+      reportType: mode === 'daily' ? '日报' : '周报',
+    })
+  }, [editText, displayReport, editing, mode, navigate])
 
   return (
     <div className="space-y-6">
@@ -340,6 +353,10 @@ export function GeneratePage() {
             <Button variant="outline" size="sm" onClick={copyReport} disabled={!reportText}>
               <Download />
               导出
+            </Button>
+            <Button variant="outline" size="sm" onClick={goRefine} disabled={!reportText} className="text-violet-600 hover:text-violet-700">
+              <MessageSquare />
+              去对话润色
             </Button>
           </div>
         </CardHeader>

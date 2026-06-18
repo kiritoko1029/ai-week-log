@@ -2,6 +2,7 @@ node_modules/
 release/
 dist/
 out/
+.pnpm-store/
 *.log
 .DS_Store
 Thumbs.db

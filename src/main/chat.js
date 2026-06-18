@@ -267,7 +267,7 @@ function buildMessages(session, turns) {
  * 流式问答编排：落盘 user 消息 → RAG 检索 → 流式生成 → 落盘 assistant 消息。
  * 通过 onEvent 推送 { type: 'refs'|'delta'|'done'|'aborted'|'error', ... }。
  */
-async function askStream({ dir, cfg, apiKey, sessionId, content, history, notesDir, searchMemory, onEvent, signal }) {
+async function askStream({ dir, cfg, apiKey, sessionId, content, history, notesDir, searchMemory, context, onEvent, signal }) {
   const emit = (p) => {
     if (onEvent) onEvent(p)
   }
@@ -286,6 +286,11 @@ async function askStream({ dir, cfg, apiKey, sessionId, content, history, notesD
   }
   emit({ type: 'refs', refs: ctx.refs })
 
+  // 额外注入上下文（如「送入对话润色」的报告文本）：前置到 contextText，优先级最高
+  const contextText = context && String(context).trim()
+    ? (String(context).trim() + (ctx.contextText ? '\n\n' + ctx.contextText : ''))
+    : ctx.contextText
+
   let provider
   try {
     provider = createProvider(cfg, apiKey)
@@ -297,7 +302,7 @@ async function askStream({ dir, cfg, apiKey, sessionId, content, history, notesD
   const session = getSession(dir, sessionId)
   const turns = (cfg.ai && cfg.ai.chat && cfg.ai.chat.historyTurns) || 12
   const msgs = buildMessages(session, turns)
-  const system = buildChatSystem(ctx.contextText)
+  const system = buildChatSystem(contextText)
   const maxTokens = (cfg.ai && cfg.ai.chat && cfg.ai.chat.maxTokens) || undefined
   const thinking = !!(cfg.ai && cfg.ai.chat && cfg.ai.chat.thinking)
 

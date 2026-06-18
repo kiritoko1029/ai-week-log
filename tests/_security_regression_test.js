@@ -36,6 +36,8 @@ ok('暴露 secrets.status()', /secrets:\s*{[\s\S]*?\bstatus:\s*\(/.test(preload)
 ok('暴露 webdav.passwordStatus()', /webdav:\s*{[\s\S]*?\bpasswordStatus:\s*\(/.test(preload))
 ok('不暴露 codexHook token 读写能力', !preload.includes('codexHook:getToken') && !preload.includes('codexHook:setToken'))
 ok('Codex hook 安装不通过 preload 暴露 token', !preload.includes('codexHookToken') && !preload.includes('token:'))
+ok('不暴露 zcodeHook token 读写能力', !preload.includes('zcodeHook:getToken') && !preload.includes('zcodeHook:setToken'))
+ok('ZCode hook 安装不通过 preload 暴露 token', !preload.includes('zcodeHookToken'))
 
 console.log('\n[2] generate IPC 异常会落到任务失败')
 const ipc = fs.readFileSync(path.join(__dirname, '..', 'src/main/ipc.js'), 'utf8')

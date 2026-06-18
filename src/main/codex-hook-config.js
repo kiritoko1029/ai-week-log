@@ -336,4 +336,8 @@ module.exports = {
   installCodexHook,
   uninstallCodexHook,
   getCodexHookInstallStatus,
+  // 纯函数工具（供 zcode-hook-config 复用，保持两端 payload 解析一致）
+  textFromValue,
+  firstText,
+  readTranscriptSummary,
 }

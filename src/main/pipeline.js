@@ -8,8 +8,9 @@ const { resolveRange, isoDate, parseDateInput } = require('./utils')
 const { collectRepo } = require('./git')
 const { loadNotes } = require('./notes')
 const { aggregate } = require('./aggregator')
-const { createProvider, buildUserPrompt, SYSTEM_PROMPT, estimateBucketTokens } = require('./llm')
+const { createProvider, buildUserPrompt, buildSystemPrompt, estimateBucketTokens } = require('./llm')
 const { render } = require('./render')
+const preferences = require('./preferences')
 
 function enabledRepos(cfg, filter) {
   let repos = (cfg.repos || []).filter((r) => r.enabled !== false)
@@ -129,6 +130,11 @@ async function generate({ cfg, apiKey, rangeOpts = {}, notesDir, options = {}, o
 
   const provider = createProvider(cfg, apiKey)
 
+  // 读取写作偏好（启用项），构造含偏好注入的系统提示词；无偏好时等价于纯 SYSTEM_PROMPT
+  const userDataDir = options.userDataDir
+  const prefs = userDataDir ? preferences.enabledRules(userDataDir) : []
+  const systemPrompt = buildSystemPrompt(prefs)
+
   const limit = cfg.ai.concurrency || 3
   const paragraphs = new Array(buckets.length)
   const failedUnits = []
@@ -140,7 +146,7 @@ async function generate({ cfg, apiKey, rangeOpts = {}, notesDir, options = {}, o
     const b = buckets[i]
     try {
       const user = buildUserPrompt(b)
-      const res = await provider.summarize(SYSTEM_PROMPT, user)
+      const res = await provider.summarize(systemPrompt, user)
       inputTokens += res.inputTokens || 0
       outputTokens += res.outputTokens || 0
       paragraphs[i] = makeParagraph(b, res.text, false)

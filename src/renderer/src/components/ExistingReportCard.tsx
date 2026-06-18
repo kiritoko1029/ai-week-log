@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronDown, ChevronUp, Clock, RefreshCw, Loader2 } from 'lucide-react'
+import { ChevronDown, ChevronUp, Clock, RefreshCw, Loader2, MessageSquare } from 'lucide-react'
 import { ReportPreview } from '@/components/ReportPreview'
 import { Markdown } from '@/components/Markdown'
 import { api } from '@/lib/api'
 import { cn, codeSurface } from '@/lib/utils'
 import { detectFormat } from '@/lib/reportFormat'
+import { useNav } from '@/hooks/useNav'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -36,6 +37,7 @@ export function ExistingReportCard({
   /** 刚生成的新报告文本：非空时本卡自动收起 */
   newReport?: string
 }) {
+  const { navigate } = useNav()
   const [open, setOpen] = useState(true)
   // 格式互转：以原始文本为基准，展示文本随格式切换而变
   const [fmt, setFmt] = useState<ReportFormat>('text')
@@ -105,6 +107,23 @@ export function ExistingReportCard({
           {existing.edited && <Badge variant="outline">已编辑</Badge>}
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate('chat', {
+              kind: 'reportRefine',
+              reportText: displayText,
+              reportType: existing.type,
+              historyId: existing.id,
+              rangeStart: existing.rangeStart,
+              rangeEnd: existing.rangeEnd,
+            })}
+            disabled={!displayText}
+            className="text-violet-600 hover:text-violet-700"
+          >
+            <MessageSquare />
+            润色
+          </Button>
           <Select value={fmt} onValueChange={(v) => handleFmtChange(v as ReportFormat)}>
             <SelectTrigger className="h-8 w-[150px]"><SelectValue /></SelectTrigger>
             <SelectContent>

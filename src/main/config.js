@@ -31,6 +31,10 @@ function defaultConfig() {
       enabled: false,
       port: 17321,
     },
+    zcodeHook: {
+      enabled: false,
+      port: 17322,
+    },
     ui: {
       theme: 'auto', // auto | light | dark
       quickNoteShortcut: 'CommandOrControl+Shift+L', // Electron accelerator（全局唤起快速记笔记）

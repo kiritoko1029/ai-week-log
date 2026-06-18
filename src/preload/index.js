@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('weeklog', {
     saveText: (n) => ipcRenderer.invoke('notes:saveText', n),
     list: (q) => ipcRenderer.invoke('notes:list', q),
     summarize: (items) => ipcRenderer.invoke('notes:summarize', { items }),
+    /** 精简替换：移除被选中的笔记，写入精简后的单条 */
+    replaceSummarized: (q) => ipcRenderer.invoke('notes:replaceSummarized', q),
   },
   report: {
     convert: (q) => ipcRenderer.invoke('report:convert', q),
@@ -53,6 +55,16 @@ contextBridge.exposeInMainWorld('weeklog', {
     copyConfig: () => ipcRenderer.invoke('codexHook:copyConfig'),
     installHook: () => ipcRenderer.invoke('codexHook:install'),
     uninstallHook: () => ipcRenderer.invoke('codexHook:uninstall'),
+  },
+  zcodeNotes: {
+    list: () => ipcRenderer.invoke('zcodeNotes:list'),
+    delete: (ids) => ipcRenderer.invoke('zcodeNotes:delete', { ids }),
+    write: (q) => ipcRenderer.invoke('zcodeNotes:write', q),
+    summarize: (ids) => ipcRenderer.invoke('zcodeNotes:summarize', { ids }),
+    status: () => ipcRenderer.invoke('zcodeHook:status'),
+    copyConfig: () => ipcRenderer.invoke('zcodeHook:copyConfig'),
+    installHook: () => ipcRenderer.invoke('zcodeHook:install'),
+    uninstallHook: () => ipcRenderer.invoke('zcodeHook:uninstall'),
   },
   collect: (q) => ipcRenderer.invoke('collect', q),
   generate: (q) => ipcRenderer.invoke('generate', q),
@@ -94,14 +106,21 @@ contextBridge.exposeInMainWorld('weeklog', {
     remove: (id) => ipcRenderer.invoke('memory:delete', { id }),
     inferProject: (noteText) => ipcRenderer.invoke('memory:inferProject', { noteText }),
   },
+  prefs: {
+    list: () => ipcRenderer.invoke('prefs:list'),
+    add: (rule) => ipcRenderer.invoke('prefs:add', { rule }),
+    toggle: (id, enabled) => ipcRenderer.invoke('prefs:toggle', { id, enabled }),
+    remove: (id) => ipcRenderer.invoke('prefs:remove', { id }),
+    extract: (oldText, newText) => ipcRenderer.invoke('prefs:extract', { oldText, newText }),
+  },
   chat: {
     sessions: () => ipcRenderer.invoke('chat:sessions'),
     getSession: (id) => ipcRenderer.invoke('chat:session:get', { id }),
     createSession: (title) => ipcRenderer.invoke('chat:session:create', { title }),
     renameSession: (id, title) => ipcRenderer.invoke('chat:session:rename', { id, title }),
     deleteSession: (id) => ipcRenderer.invoke('chat:session:delete', { id }),
-    /** 发起流式问答，立即返回 { msgId }，正文经 onStream 推送 */
-    send: (sessionId, content) => ipcRenderer.invoke('chat:send', { sessionId, content }),
+    /** 发起流式问答，立即返回 { msgId }，正文经 onStream 推送。context 为额外上下文（如送入润色的报告文本） */
+    send: (sessionId, content, context) => ipcRenderer.invoke('chat:send', { sessionId, content, context }),
     /** 快捷生成日报/周报，立即返回 { msgId }，进度与结果经 onStream 推送 */
     generate: (sessionId, reportType, when) =>
       ipcRenderer.invoke('chat:generate', { sessionId, reportType, when }),

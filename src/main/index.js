@@ -22,10 +22,12 @@ if (process.platform === 'win32') {
 const { registerIpc } = require('./ipc')
 const { trayIconBuffer } = require('./icon')
 const { loadConfig } = require('./config')
+const { applyProxy } = require('./proxy')
 const { createBackup } = require('./webdav')
 const { createUpdaterController } = require('./updater')
 const { createLogger } = require('./logger')
 const { createCodexHookServer } = require('./codex-hook-server')
+const { createZcodeHookServer } = require('./zcode-hook-server')
 const secrets = require('./secrets')
 const tasks = require('./tasks')
 
@@ -48,6 +50,7 @@ let currentShortcut = SHORTCUT_DEFAULT
 let updater = null
 let logger = null
 let codexHookServer = null
+let zcodeHookServer = null
 
 /** 当前主题是否解析为深色（依据 nativeTheme） */
 function isDark() { return nativeTheme.shouldUseDarkColors }
@@ -304,8 +307,9 @@ function quitApp() {
   // 给同步最多 8 秒，超时也放行退出
   const timeout = new Promise((resolve) => setTimeout(resolve, 8000))
   Promise.race([syncDone, timeout]).finally(() => {
-    const closeHook = codexHookServer ? codexHookServer.close() : Promise.resolve()
-    closeHook.finally(() => {
+    const closeCodex = codexHookServer ? codexHookServer.close() : Promise.resolve()
+    const closeZcode = zcodeHookServer ? zcodeHookServer.close() : Promise.resolve()
+    Promise.all([closeCodex, closeZcode]).finally(() => {
       globalShortcut.unregisterAll()
       if (tray) { tray.destroy(); tray = null }
       app.quit()
@@ -368,6 +372,9 @@ app.whenReady().then(() => {
     dev: process.env.WEEKLOG_DEV === '1',
   })
 
+  // 应用网络代理（覆盖所有主进程出站请求：LLM / WebDAV / 更新 / 模型下载）
+  applyProxy(cfg, logger)
+
   updater = createUpdaterController({ app, getMainWindow: () => mainWindow, logger })
   codexHookServer = createCodexHookServer({
     dir: app.getPath('userData'),
@@ -375,7 +382,13 @@ app.whenReady().then(() => {
     getToken: () => secrets.getKey(app.getPath('userData'), 'codexHook'),
     logger,
   })
-  registerIpc({ app, getMainWindow: () => mainWindow, updater, codexHookServer })
+  zcodeHookServer = createZcodeHookServer({
+    dir: app.getPath('userData'),
+    getConfig: () => loadConfig(app.getPath('userData')),
+    getToken: () => secrets.getKey(app.getPath('userData'), 'zcodeHook'),
+    logger,
+  })
+  registerIpc({ app, getMainWindow: () => mainWindow, updater, codexHookServer, zcodeHookServer })
 
   // 先应用主题，使窗口创建时底色正确（避免闪烁）
   applyNativeTheme(cfg.ui && cfg.ui.theme)
@@ -388,6 +401,7 @@ app.whenReady().then(() => {
   triggerAutoSync('pull')
   updater.scheduleStartupCheck()
   codexHookServer.applyConfig()
+  zcodeHookServer.applyConfig()
 
   // ── IPC ──
   ipcMain.on('quicknote:hide', () => hideQuickNote())
@@ -429,6 +443,7 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   if (codexHookServer) codexHookServer.close()
+  if (zcodeHookServer) zcodeHookServer.close()
 })
 
 // 托盘模式下：所有窗口关闭也不退出，保持后台运行
