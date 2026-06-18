@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Tabs, TabsListUnderline, TabsTriggerUnderline, TabsContent } from '@/components/ui/tabs'
 import { ProjectSelect } from '@/components/ProjectSelect'
 import type { Note, MemoryInferResult, CodexPendingNote } from '@/types/weeklog'
 
@@ -313,6 +314,15 @@ export function NotesPage() {
         <p className="text-sm text-muted-foreground">补充会议、沟通、设计、调研等非代码工作 · notes/YYYY-MM-DD.md</p>
       </div>
 
+      <Tabs defaultValue="quick">
+        <TabsListUnderline>
+          <TabsTriggerUnderline value="quick">快速添加</TabsTriggerUnderline>
+          <TabsTriggerUnderline value="pending">Codex 待处理</TabsTriggerUnderline>
+          <TabsTriggerUnderline value="timeline">笔记时间线</TabsTriggerUnderline>
+          <TabsTriggerUnderline value="raw">原始格式</TabsTriggerUnderline>
+        </TabsListUnderline>
+
+        <TabsContent value="quick" className="space-y-6 pt-6">
       {/* 快速添加 */}
       <Card>
         <CardContent className="pt-6">
@@ -385,7 +395,9 @@ export function NotesPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="pending" className="space-y-6 pt-6">
       {/* Codex hook 待处理小记池 */}
       <Card>
         <CardHeader className="gap-3 md:flex-row md:items-center md:justify-between">
@@ -542,7 +554,9 @@ export function NotesPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="timeline" className="space-y-6 pt-6">
       {/* 筛选 */}
       <div className="flex flex-wrap items-center gap-3">
         <ToggleGroup type="single" value={filter} onValueChange={(v) => v && setFilter(v as Filter)}>
@@ -589,7 +603,9 @@ export function NotesPage() {
           ))}
         </div>
       )}
+        </TabsContent>
 
+        <TabsContent value="raw" className="space-y-6 pt-6">
       {/* 原始格式预览 */}
       <Card>
         <CardHeader className="flex-row items-center justify-between">
@@ -606,6 +622,8 @@ export function NotesPage() {
           </p>
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* 编辑器弹窗 */}
       <Dialog open={editorOpen} onOpenChange={setEditorOpen}>

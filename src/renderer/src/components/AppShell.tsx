@@ -16,8 +16,6 @@ import {
 import { useNav, type PageId } from '@/hooks/useNav'
 import { useConfig } from '@/hooks/useConfig'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { GithubIcon } from '@/components/GithubIcon'
-import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 interface NavItem {
@@ -162,7 +160,6 @@ export function AppShell({ children, isMac }: { children: React.ReactNode; isMac
                     sidebarCollapsed && 'justify-center'
                   )}
                 >
-                  {sidebarCollapsed && <LineChart className="h-[18px] w-[18px]" />}
                   <h1 className={cn('text-xl font-bold tracking-tight text-foreground', sidebarCollapsed && 'sr-only')}>
                     WeekLog
                   </h1>
@@ -250,44 +247,6 @@ export function AppShell({ children, isMac }: { children: React.ReactNode; isMac
                 </div>
               ))}
             </nav>
-            <div
-              className={cn(
-                'flex flex-shrink-0 border-t py-3',
-                sidebarCollapsed ? 'flex-col items-center gap-2 px-2' : 'items-center gap-2 px-5'
-              )}
-            >
-              <span className={cn('font-mono text-xs text-muted-foreground', sidebarCollapsed && 'sr-only')}>
-                v{__APP_VERSION__}
-              </span>
-              {sidebarCollapsed ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      data-app-region="no-drag"
-                      type="button"
-                      onClick={() => api.shell.openExternal('https://github.com/kiritoko1029/ai-week-log')}
-                      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                      title="GitHub 仓库"
-                      aria-label="GitHub 仓库"
-                    >
-                      <GithubIcon className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">GitHub 仓库</TooltipContent>
-                </Tooltip>
-              ) : (
-                <button
-                  data-app-region="no-drag"
-                  type="button"
-                  onClick={() => api.shell.openExternal('https://github.com/kiritoko1029/ai-week-log')}
-                  className="text-muted-foreground transition-colors hover:text-foreground"
-                  title="GitHub 仓库"
-                  aria-label="GitHub 仓库"
-                >
-                  <GithubIcon className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
           </aside>
         </TooltipProvider>
 

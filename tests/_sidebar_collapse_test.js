@@ -27,6 +27,7 @@ ok('collapsed sidebar uses icon-only width', appShell.includes("sidebarCollapsed
 ok('collapsed navigation items expose tooltip labels', appShell.includes('<TooltipProvider') && appShell.includes('<TooltipContent') && appShell.includes('{item.label}'))
 ok('collapsed state hides section labels from layout', appShell.includes('sr-only') && appShell.includes('{sec.title}'))
 ok('collapsed badges stay visible as compact counters', appShell.includes('size-5') && appShell.includes('{item.badge}'))
+ok('collapsed sidebar header does not render a duplicate brand icon', !appShell.includes('sidebarCollapsed && <LineChart'))
 
 console.log(`\nResult: ${pass} passed, ${fail} failed\n`)
 process.exit(fail ? 1 : 0)

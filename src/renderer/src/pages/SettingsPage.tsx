@@ -16,6 +16,7 @@ import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Tabs, TabsListUnderline, TabsTriggerUnderline, TabsContent } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus, WebdavBackupInfo, CodexHookStatus } from '@/types/weeklog'
 
@@ -424,6 +425,16 @@ export function SettingsPage() {
         <p className="text-sm text-muted-foreground">配置 LLM 后端、笔记、输出格式、并发与容错策略</p>
       </div>
 
+      <Tabs defaultValue="general">
+        <TabsListUnderline>
+          <TabsTriggerUnderline value="general">通用</TabsTriggerUnderline>
+          <TabsTriggerUnderline value="notes">笔记</TabsTriggerUnderline>
+          <TabsTriggerUnderline value="ai">AI</TabsTriggerUnderline>
+          <TabsTriggerUnderline value="output">输出</TabsTriggerUnderline>
+          <TabsTriggerUnderline value="data">数据与同步</TabsTriggerUnderline>
+        </TabsListUnderline>
+
+        <TabsContent value="general" className="space-y-6 pt-6">
       {/* 界面与快捷键 */}
       <Card>
         <CardHeader>
@@ -504,7 +515,9 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="notes" className="space-y-6 pt-6">
       {/* 笔记配置 */}
       <Card className="border-l-4 border-l-violet-500">
         <CardHeader>
@@ -643,7 +656,9 @@ export function SettingsPage() {
           </p>
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="ai" className="space-y-6 pt-6">
       {/* AI 提供商 */}
       <Card>
         <CardHeader className="flex-row items-center justify-between">
@@ -803,7 +818,9 @@ export function SettingsPage() {
           </details>
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="output" className="space-y-6 pt-6">
       {/* 输出格式 */}
       <Card>
         <CardHeader>
@@ -846,7 +863,9 @@ export function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="data" className="space-y-6 pt-6">
       {/* 本地备份 */}
       <Card className="border-l-4 border-l-emerald-500">
         <CardHeader>
@@ -1260,6 +1279,8 @@ export function SettingsPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
 
       <div className="fixed bottom-12 right-8 z-30">
         <Button onClick={handleSave} className="shadow-sm">
