@@ -12,10 +12,15 @@
     "typecheck": "tsc --noEmit",
     "dist:win": "npm run build:renderer && electron-builder --win --x64 --publish never",
     "dist:mac": "npm run build:renderer && electron-builder --mac --arm64 --publish never",
-    "dist": "npm run build:renderer && electron-builder --win --x64 --mac --arm64 --publish never"
+    "dist": "npm run build:renderer && electron-builder --win --x64 --mac --arm64 --publish never",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "dev:renderer:tauri": "cross-env WEEKLOG_TAURI=1 vite",
+    "build:renderer:tauri": "cross-env WEEKLOG_TAURI=1 vite build"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.1",
+    "@tauri-apps/cli": "^2.11.2",
     "@types/node": "^25.9.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -43,7 +48,8 @@
       "!src/renderer/public/**",
       "!src/renderer/index.html",
       "!src/renderer/quicknote.html",
-      "!src/renderer/vite.config.*"
+      "!src/renderer/vite.config.*",
+      "!src-tauri/**"
     ],
     "mac": {
       "icon": "build/icon.icns",
@@ -101,6 +107,8 @@
     "@radix-ui/react-tabs": "^1.1.14",
     "@radix-ui/react-toggle-group": "^1.1.12",
     "@radix-ui/react-tooltip": "^1.2.9",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "electron-updater": "^6.8.9",

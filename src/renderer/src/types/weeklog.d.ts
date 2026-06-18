@@ -725,6 +725,8 @@ declare global {
   }
   /** 应用版本号，由 vite 编译期从 package.json 注入 */
   const __APP_VERSION__: string
+  /** 是否为 Tauri 2 构建目标，由 vite define 在 WEEKLOG_TAURI=1 时注入为 true */
+  const __TAURI__: boolean
 }
 
 export {}
