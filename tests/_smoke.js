@@ -144,6 +144,8 @@ console.log('\n[9] 三格式互转 convertFormat')
   // text → md
   const t2m = R.convertFormat(text, { from: 'text', to: 'md' })
   ok('text→md 含标题', /# 工作周报/.test(t2m), t2m)
+  ok('text→md 标题无 NaN（range 缺失兜底）', !t2m.includes('NaN'), t2m)
+  ok('text→md 标题用首尾日期兜底', t2m.includes('工作周报 (2026/6/9 - 2026/6/10)'), t2m)
   ok('text→md 段落标记', t2m.includes('- **【前端】**：总结A。'), t2m)
 
   // 任意两两转换后回到 compact 应等价（往返保真）

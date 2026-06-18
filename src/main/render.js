@@ -73,7 +73,10 @@ function renderText(report, opts = {}) {
 /** md 格式 */
 function renderMarkdown(report, opts = {}) {
   const lines = []
-  lines.push(`# 工作周报 (${formatDateNoZero(report.rangeStart)} - ${formatDateNoZero(report.rangeEnd)})`)
+  // rangeStart/rangeEnd 可能缺失（如从 text/compact 互转而来），缺则用首尾日期兜底，避免 NaN
+  const start = report.rangeStart || (report.days.length ? report.days[0].day : new Date())
+  const end = report.rangeEnd || (report.days.length ? report.days[report.days.length - 1].day : start)
+  lines.push(`# 工作周报 (${formatDateNoZero(start)} - ${formatDateNoZero(end)})`)
   lines.push('')
   for (const day of report.days) {
     lines.push(`## ${formatDateNoZero(day.day)}`)
