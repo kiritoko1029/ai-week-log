@@ -138,6 +138,44 @@ function countNotes(notesDir, dateStr, miscProject) {
   return parseNoteText(text, dateStr, miscProject, '').length
 }
 
+// ── AI 精简：把多条笔记合并成一条精简中文小记（供时间线多选精简）──
+
+const NOTE_SUMMARY_SYSTEM = `你是一名研发工作小记整理助手。
+请把多条人工工作笔记合并精简成一条适合写入日报/周报素材的中文小记。
+要求：客观、简洁、书面化；合并同类事项、剔除冗余；保留真实完成事项和价值；不要编造未提供的信息。
+直接输出精简后的小记内容本身，不要标题、不要解释、不要项目名前缀、不要分点。`
+
+function buildNoteSummaryPrompt(notes) {
+  const lines = ['请精简整理以下工作笔记：', '']
+  notes.forEach((note, index) => {
+    const meta = []
+    if (note.project) meta.push(`项目：${note.project}`)
+    if (note.date) meta.push(`日期：${note.date}`)
+    lines.push(`${index + 1}. ${note.content}`)
+    if (meta.length) lines.push(`   ${meta.join('；')}`)
+  })
+  lines.push('', '请输出一条精简后可直接写入工作小记的中文内容。')
+  return lines.join('\n')
+}
+
+/**
+ * AI 精简笔记：多条 → 一条。
+ * @param {Array<{ date?: string; project?: string | null; content: string }>} notes
+ * @param {{ provider?: any }} opts
+ */
+async function summarizeNotes(notes, { provider } = {}) {
+  const items = (notes || []).filter((n) => n && typeof n.content === 'string' && n.content.trim())
+  if (!items.length) return { text: '', model: '' }
+  if (!provider || typeof provider.summarize !== 'function') throw new Error('未提供 AI provider')
+  const result = await provider.summarize(NOTE_SUMMARY_SYSTEM, buildNoteSummaryPrompt(items))
+  return {
+    text: String((result && result.text) || '').trim(),
+    model: result && result.model,
+    inputTokens: result && result.inputTokens,
+    outputTokens: result && result.outputTokens,
+  }
+}
+
 module.exports = {
   noteFilePath,
   iterateDates,
@@ -148,4 +186,6 @@ module.exports = {
   appendNote,
   appendSegment,
   countNotes,
+  summarizeNotes,
+  NOTE_SUMMARY_SYSTEM,
 }

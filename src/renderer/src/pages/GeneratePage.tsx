@@ -18,7 +18,8 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import type { GenerateRangeOpts } from '@/types/weeklog'
+import type { GenerateRangeOpts, ReportFormat } from '@/types/weeklog'
+import { Markdown } from '@/components/Markdown'
 
 type Mode = 'weekly' | 'daily'
 type RangePreset = 'thisweek' | 'lastweek' | 'custom'
@@ -35,7 +36,10 @@ export function GeneratePage() {
   const [notesEnabled, setNotesEnabled] = useState(true)
   const [author, setAuthor] = useState('')
   const [merge, setMerge] = useState<'exclude' | 'include' | 'only'>('exclude')
-  const [format, setFormat] = useState<'text' | 'md' | 'json'>('text')
+  const [format, setFormat] = useState<ReportFormat>('text')
+  // 跟踪当前预览/编辑区文本所属的格式，用于切换下拉时做即时格式互转
+  const [lastRenderedFormat, setLastRenderedFormat] = useState<ReportFormat>('text')
+  const [converting, setConverting] = useState(false)
 
   // 融合预览统计
   const [fusion, setFusion] = useState<{ commitCount: number; noteCount: number; noteProjectCount: number; noteMiscCount: number; desc: string } | null>(null)
@@ -44,17 +48,24 @@ export function GeneratePage() {
   // 报告编辑：editText 是用户可改的副本，随每次新生成的 report 重置
   const [editText, setEditText] = useState('')
   const [editing, setEditing] = useState(false)
-  useEffect(() => {
-    setEditText(gen.report)
-  }, [gen.report])
+  // 非编辑态下展示的报告文本（可被格式互转覆盖；gen.report 不可写）
+  const [displayReport, setDisplayReport] = useState('')
 
   useEffect(() => {
     if (config) {
       setNotesEnabled(config.notes.enabled)
       setMerge(config.filters.mergeCommits)
       setFormat(config.output.format)
+      setLastRenderedFormat(config.output.format)
     }
   }, [config])
+
+  // 新报告生成后，文本格式即所选生成格式；同步展示与编辑副本
+  useEffect(() => {
+    setEditText(gen.report)
+    setDisplayReport(gen.report)
+    if (gen.report) setLastRenderedFormat(format)
+  }, [gen.report, format])
 
   const buildRange = useCallback((): GenerateRangeOpts => {
     if (mode === 'daily') return { mode: 'daily', date: dailyDate }
@@ -115,7 +126,7 @@ export function GeneratePage() {
   }, [buildRange, buildOptions])
 
   // 复制 / 导出一律用编辑后的文本（用户可能已手动更正）
-  const reportText = editing ? editText : gen.report
+  const reportText = editing ? editText : displayReport
   const copyReport = useCallback(() => {
     navigator.clipboard?.writeText(editText)
     toast.success('已复制到剪贴板')
@@ -124,10 +135,31 @@ export function GeneratePage() {
   // 切换编辑模式：进入编辑时以当前报告为起点；改动持续保留，直到下次「生成报告」重置
   const toggleEditing = useCallback(() => {
     setEditing((on) => {
-      if (!on) setEditText(gen.report) // 进入编辑前同步最新
+      if (!on) setEditText(displayReport) // 进入编辑前同步最新展示文本
       return !on
     })
-  }, [gen.report])
+  }, [displayReport])
+
+  // 切换输出格式：有报告时即时互转（不调 AI），无报告时仅设定下次生成格式
+  const handleFormatChange = useCallback(
+    async (v: ReportFormat) => {
+      setFormat(v)
+      const current = editing ? editText : displayReport
+      if (!current || v === lastRenderedFormat) return
+      setConverting(true)
+      try {
+        const r = await api.report.convert({ text: current, from: lastRenderedFormat, to: v })
+        setEditText(r.text)
+        setDisplayReport(r.text)
+        setLastRenderedFormat(v)
+      } catch {
+        // 转换失败静默保留原文
+      } finally {
+        setConverting(false)
+      }
+    },
+    [editText, displayReport, editing, lastRenderedFormat]
+  )
 
   return (
     <div className="space-y-6">
@@ -260,12 +292,12 @@ export function GeneratePage() {
             </div>
             <div className="min-w-[140px] space-y-1.5">
               <Label>输出格式</Label>
-              <Select value={format} onValueChange={(v) => setFormat(v as typeof format)}>
+              <Select value={format} onValueChange={(v) => handleFormatChange(v as ReportFormat)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="text">text（默认）</SelectItem>
-                  <SelectItem value="md">md</SelectItem>
-                  <SelectItem value="json">json</SelectItem>
+                  <SelectItem value="compact">紧凑文本（无换行）</SelectItem>
+                  <SelectItem value="text">格式化文本（有换行）</SelectItem>
+                  <SelectItem value="md">Markdown</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -292,17 +324,20 @@ export function GeneratePage() {
       {/* 报告预览 */}
       <Card>
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>报告预览</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            报告预览
+            {converting && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          </CardTitle>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={toggleEditing} disabled={!gen.report}>
+            <Button variant="outline" size="sm" onClick={toggleEditing} disabled={!reportText}>
               {editing ? <Check /> : <Pencil />}
               {editing ? '完成' : '编辑'}
             </Button>
-            <Button variant="outline" size="sm" onClick={copyReport} disabled={!gen.report}>
+            <Button variant="outline" size="sm" onClick={copyReport} disabled={!reportText}>
               <Copy />
               复制
             </Button>
-            <Button variant="outline" size="sm" onClick={copyReport} disabled={!gen.report}>
+            <Button variant="outline" size="sm" onClick={copyReport} disabled={!reportText}>
               <Download />
               导出
             </Button>
@@ -317,6 +352,10 @@ export function GeneratePage() {
               spellCheck={false}
               className={cn(codeSurface, 'min-h-[240px] w-full resize-y p-8 shadow-sm outline-none focus:ring-2 focus:ring-ring')}
             />
+          ) : format === 'md' ? (
+            <div className={cn(codeSurface, 'min-h-[120px] overflow-x-auto p-8 shadow-sm')}>
+              {reportText ? <Markdown content={reportText} /> : <span className="text-slate-500">生成报告后这里会显示预览…</span>}
+            </div>
           ) : (
             <ReportPreview text={reportText} />
           )}

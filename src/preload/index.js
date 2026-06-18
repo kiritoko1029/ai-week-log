@@ -39,6 +39,10 @@ contextBridge.exposeInMainWorld('weeklog', {
     getText: (date) => ipcRenderer.invoke('notes:getText', date),
     saveText: (n) => ipcRenderer.invoke('notes:saveText', n),
     list: (q) => ipcRenderer.invoke('notes:list', q),
+    summarize: (items) => ipcRenderer.invoke('notes:summarize', { items }),
+  },
+  report: {
+    convert: (q) => ipcRenderer.invoke('report:convert', q),
   },
   codexNotes: {
     list: () => ipcRenderer.invoke('codexNotes:list'),

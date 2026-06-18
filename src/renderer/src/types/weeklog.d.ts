@@ -13,6 +13,9 @@ export interface Repo {
   author?: string
 }
 
+/** 报告输出格式：紧凑文本（每天一行）/ 格式化文本（每项目一行）/ Markdown */
+export type ReportFormat = 'compact' | 'text' | 'md'
+
 /** 扫描得到的仓库候选项（未注册） */
 export interface ScannedRepo {
   path: string
@@ -61,7 +64,7 @@ export interface Config {
     chat: { maxTokens: number; topK: number; historyTurns: number; thinking: boolean }
   }
   output: {
-    format: 'text' | 'md' | 'json'
+    format: ReportFormat
     newline: 'CRLF' | 'LF'
     withCommits: boolean
     showNotes: boolean
@@ -80,6 +83,10 @@ export interface Config {
     modelSource: 'auto' | 'huggingface' | 'modelscope'
     autoGenerate: boolean
     topK: number
+  }
+  proxy: {
+    mode: 'off' | 'system' | 'custom'
+    url: string
   }
 }
 
@@ -171,7 +178,7 @@ export interface GenerateRangeOpts {
 
 export interface GenerateOptions {
   noNotes?: boolean
-  format?: 'text' | 'md' | 'json'
+  format?: ReportFormat
   author?: string
   merge?: 'exclude' | 'include' | 'only'
   weekStart?: 'monday' | 'sunday'
@@ -512,6 +519,11 @@ export interface WeeklogAPI {
     getText: (date: string) => Promise<string>
     saveText: (n: { date: string; text: string }) => Promise<{ ok: boolean }>
     list: (q: { from: string; to: string }) => Promise<Note[]>
+    summarize: (items: Note[]) => Promise<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>
+  }
+  report: {
+    /** 在 compact / text / md 三种格式间互转（不调 AI，纯字符串解析+重渲染）。失败回退原文本。 */
+    convert: (q: { text: string; from: ReportFormat; to: ReportFormat; newline?: 'CRLF' | 'LF' }) => Promise<{ text: string }>
   }
   codexNotes: {
     list: () => Promise<CodexPendingNote[]>

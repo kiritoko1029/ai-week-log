@@ -60,7 +60,7 @@ function defaultConfig() {
       },
     },
     output: {
-      format: 'text', // text | md | json
+      format: 'text', // compact | text | md（json 兼容保留，UI 不暴露）
       newline: process.platform === 'win32' ? 'CRLF' : 'LF',
       withCommits: false,
       showNotes: false,
@@ -80,6 +80,10 @@ function defaultConfig() {
       modelSource: 'auto', // auto | huggingface | modelscope（auto：探测魔搭可达性，通则魔搭否则回退 HF）
       autoGenerate: true, // 报告生成后自动产出记忆
       topK: 5, // 检索时注入 LLM 的记忆条数上限
+    },
+    proxy: {
+      mode: 'system', // off | system | custom
+      url: '', // 自定义模式下的代理 URL，如 http://127.0.0.1:7890 或 http://user:pass@host:port
     },
   }
 }

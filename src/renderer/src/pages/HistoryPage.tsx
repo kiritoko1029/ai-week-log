@@ -8,7 +8,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import type { HistoryEntry } from '@/types/weeklog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { detectFormat } from '@/lib/reportFormat'
+import type { HistoryEntry, ReportFormat } from '@/types/weeklog'
 
 export function HistoryPage() {
   const [list, setList] = useState<HistoryEntry[]>([])
@@ -16,6 +18,10 @@ export function HistoryPage() {
   // 编辑态：弹窗内的可编辑文本
   const [editText, setEditText] = useState('')
   const [saving, setSaving] = useState(false)
+  // 格式互转：当前文本所属格式 + 切换中状态
+  const [fmt, setFmt] = useState<ReportFormat>('text')
+  const [lastFmt, setLastFmt] = useState<ReportFormat>('text')
+  const [converting, setConverting] = useState(false)
 
   const load = useCallback(async () => {
     setList(await api.history.list())
@@ -28,7 +34,29 @@ export function HistoryPage() {
   const openEntry = useCallback((h: HistoryEntry) => {
     setSelected(h)
     setEditText(h.text || '')
+    const detected = detectFormat(h.text || '')
+    setFmt(detected)
+    setLastFmt(detected)
   }, [])
+
+  // 切换格式：即时互转（不调 AI）
+  const handleFmtChange = useCallback(
+    async (v: ReportFormat) => {
+      setFmt(v)
+      if (!editText || v === lastFmt) return
+      setConverting(true)
+      try {
+        const r = await api.report.convert({ text: editText, from: lastFmt, to: v })
+        setEditText(r.text)
+        setLastFmt(v)
+      } catch {
+        // 转换失败静默保留原文
+      } finally {
+        setConverting(false)
+      }
+    },
+    [editText, lastFmt]
+  )
 
   const saveEdit = useCallback(async () => {
     if (!selected) return
@@ -129,6 +157,18 @@ export function HistoryPage() {
               {selected?.edited && <Badge variant="muted">已编辑</Badge>}
             </DialogTitle>
           </DialogHeader>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">格式</span>
+            <Select value={fmt} onValueChange={(v) => handleFmtChange(v as ReportFormat)}>
+              <SelectTrigger className="h-8 w-[180px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="compact">紧凑文本（无换行）</SelectItem>
+                <SelectItem value="text">格式化文本（有换行）</SelectItem>
+                <SelectItem value="md">Markdown</SelectItem>
+              </SelectContent>
+            </Select>
+            {converting && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          </div>
           <textarea
             value={editText}
             onChange={(e) => setEditText(e.target.value)}

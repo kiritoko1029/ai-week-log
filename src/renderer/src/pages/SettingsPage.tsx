@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity, ArchiveRestore, Copy } from 'lucide-react'
+import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity, ArchiveRestore, Copy, Globe } from 'lucide-react'
 import { ProviderBadge } from '@/components/BrandIcons'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -833,9 +833,9 @@ export function SettingsPage() {
               <Select value={draft.output.format} onValueChange={(v) => patch((c) => { c.output.format = v as Config['output']['format'] })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="text">text（推荐）</SelectItem>
-                  <SelectItem value="md">md</SelectItem>
-                  <SelectItem value="json">json</SelectItem>
+                  <SelectItem value="compact">紧凑文本（无换行）</SelectItem>
+                  <SelectItem value="text">格式化文本（有换行，推荐）</SelectItem>
+                  <SelectItem value="md">Markdown</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1053,6 +1053,58 @@ export function SettingsPage() {
               </Dialog>
             </>
           )}
+        </CardContent>
+      </Card>
+
+      {/* 网络代理 */}
+      <Card className="border-l-4 border-l-indigo-500">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Globe className="size-4" />网络代理</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <RadioGroup
+            value={draft.proxy?.mode ?? 'system'}
+            onValueChange={(v) => patch((c) => { c.proxy = { ...(c.proxy || { mode: 'system', url: '' }), mode: v as Config['proxy']['mode'] } })}
+            className="grid gap-2"
+          >
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="system" id="proxy-mode-system" />
+              <Label htmlFor="proxy-mode-system" className="cursor-pointer font-normal">跟随系统代理（默认）</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="custom" id="proxy-mode-custom" />
+              <Label htmlFor="proxy-mode-custom" className="cursor-pointer font-normal">自定义代理</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="off" id="proxy-mode-off" />
+              <Label htmlFor="proxy-mode-off" className="cursor-pointer font-normal">关闭（直连）</Label>
+            </div>
+          </RadioGroup>
+
+          {(draft.proxy?.mode ?? 'system') === 'custom' && (
+            <div className="space-y-1.5">
+              <Label>代理 URL</Label>
+              <Input
+                value={draft.proxy?.url ?? ''}
+                onChange={(e) => patch((c) => { c.proxy = { ...(c.proxy || { mode: 'custom', url: '' }), url: e.target.value } })}
+                placeholder="http://127.0.0.1:7890"
+                className="font-mono"
+              />
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                支持 http / https / socks 代理。可含凭证：<code className="rounded bg-muted px-1 py-0.5 font-mono">http://user:pass@host:port</code>
+              </p>
+            </div>
+          )}
+
+          {(draft.proxy?.mode ?? 'system') === 'system' && (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              读取系统环境变量 <code className="rounded bg-muted px-1 py-0.5 font-mono">HTTPS_PROXY</code> / <code className="rounded bg-muted px-1 py-0.5 font-mono">HTTP_PROXY</code>；未设置时直连。Clash / V2Ray 等通常会自动设置这些变量。
+            </p>
+          )}
+
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            覆盖 AI 对话、模型下载、应用更新检查、WebDAV 同步等所有出站请求。保存后立即生效。
+          </p>
         </CardContent>
       </Card>
 

@@ -17,12 +17,14 @@ const {
 } = require('./config')
 const { checkGit, isGitRepo, currentBranch, scanGitRepos } = require('./git')
 const { testProvider } = require('./llm')
+const render = require('./render')
 const notes = require('./notes')
 const codexPendingNotes = require('./codex-pending-notes')
 const codexHookConfig = require('./codex-hook-config')
 const secrets = require('./secrets')
 const { collect, generate } = require('./pipeline')
 const { isoDate } = require('./utils')
+const { applyProxy } = require('./proxy')
 const webdav = require('./webdav')
 const localBackup = require('./local-backup')
 const memory = require('./memory')
@@ -146,11 +148,13 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
   ipcMain.handle('config:get', () => getConfig())
   ipcMain.handle('config:save', async (_e, cfg) => {
     const saved = persist(cfg)
+    applyProxy(saved, logger)
     if (codexHookServer && typeof codexHookServer.applyConfig === 'function') await codexHookServer.applyConfig()
     return saved
   })
   ipcMain.handle('config:reset', async () => {
     const saved = persist(defaultConfig())
+    applyProxy(saved, logger)
     if (codexHookServer && typeof codexHookServer.applyConfig === 'function') await codexHookServer.applyConfig()
     return saved
   })
@@ -246,6 +250,23 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer }) {
   ipcMain.handle('notes:list', (_e, { from, to }) => {
     const cfg = getConfig()
     return notes.loadNotes(getNotesDir(), from, to, cfg.notes.miscProject)
+  })
+  ipcMain.handle('notes:summarize', async (_e, { items } = {}) => {
+    const cfg = getConfig()
+    const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))
+    if (!has) return { error: '未配置 AI API Key' }
+    const provider = require('./llm').createProvider(cfg, key)
+    return notes.summarizeNotes(items || [], { provider })
+  })
+
+  // ── 报告格式互转（不调 AI，纯字符串解析 + 重渲染）──
+  ipcMain.handle('report:convert', (_e, { text, from, to, newline } = {}) => {
+    try {
+      return { text: render.convertFormat(text || '', { from, to, newline }) }
+    } catch (e) {
+      // 转换异常回退原文本，保证不丢内容
+      return { text: String(text || '') }
+    }
   })
 
   // ── Codex hook 待处理小记 ──

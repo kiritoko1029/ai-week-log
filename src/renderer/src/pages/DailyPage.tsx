@@ -6,12 +6,15 @@ import { useGenerate } from '@/hooks/useGenerate'
 import { useExistingReport } from '@/hooks/useExistingReport'
 import { useNav } from '@/hooks/useNav'
 import { ReportPreview } from '@/components/ReportPreview'
+import { Markdown } from '@/components/Markdown'
 import { ExistingReportCard } from '@/components/ExistingReportCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { cn, codeSurface } from '@/lib/utils'
+import type { ReportFormat } from '@/types/weeklog'
 
 export function DailyPage() {
   const { config } = useConfig()
@@ -19,15 +22,47 @@ export function DailyPage() {
   const gen = useGenerate()
   const [date, setDate] = useState('today')
   const [noCommits, setNoCommits] = useState(true)
-  const [format, setFormat] = useState<'text' | 'md' | 'json'>('text')
+  const [format, setFormat] = useState<ReportFormat>('text')
+  // 跟踪当前预览文本所属的格式，用于切换下拉时做即时格式互转
+  const [lastRenderedFormat, setLastRenderedFormat] = useState<ReportFormat>('text')
+  const [displayReport, setDisplayReport] = useState('')
+  const [converting, setConverting] = useState(false)
 
   useEffect(() => {
-    if (config) setFormat(config.output.format)
+    if (config) {
+      setFormat(config.output.format)
+      setLastRenderedFormat(config.output.format)
+    }
   }, [config])
+
+  // 新报告生成后同步展示文本与格式
+  useEffect(() => {
+    setDisplayReport(gen.report)
+    if (gen.report) setLastRenderedFormat(format)
+  }, [gen.report, format])
 
   const doGenerate = useCallback(() => {
     gen.run({ mode: 'daily', date }, { format, weekStart: config?.weekStart }, '日报')
   }, [gen, date, format, config])
+
+  // 切换输出格式：有报告时即时互转（不调 AI），无报告时仅设定下次生成格式
+  const handleFormatChange = useCallback(
+    async (v: ReportFormat) => {
+      setFormat(v)
+      if (!displayReport || v === lastRenderedFormat) return
+      setConverting(true)
+      try {
+        const r = await api.report.convert({ text: displayReport, from: lastRenderedFormat, to: v })
+        setDisplayReport(r.text)
+        setLastRenderedFormat(v)
+      } catch {
+        // 转换失败静默保留原文
+      } finally {
+        setConverting(false)
+      }
+    },
+    [displayReport, lastRenderedFormat]
+  )
 
   // 当前日期下是否已有日报，用于展示「重新生成将覆盖」
   const rangeOpts = useMemo(() => ({ mode: 'daily' as const, date }), [date])
@@ -65,12 +100,12 @@ export function DailyPage() {
             </div>
             <div className="min-w-[140px] space-y-1.5">
               <Label>输出格式</Label>
-              <Select value={format} onValueChange={(v) => setFormat(v as typeof format)}>
+              <Select value={format} onValueChange={(v) => handleFormatChange(v as ReportFormat)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="text">text（默认）</SelectItem>
-                  <SelectItem value="md">md</SelectItem>
-                  <SelectItem value="json">json</SelectItem>
+                  <SelectItem value="compact">紧凑文本（无换行）</SelectItem>
+                  <SelectItem value="text">格式化文本（有换行）</SelectItem>
+                  <SelectItem value="md">Markdown</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -102,11 +137,20 @@ export function DailyPage() {
 
       <Card>
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>日报预览</CardTitle>
-          {gen.report && <Badge variant="secondary">{date === 'today' ? '今天' : date === 'yesterday' ? '昨天' : date}</Badge>}
+          <CardTitle className="flex items-center gap-2">
+            日报预览
+            {converting && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          </CardTitle>
+          {displayReport && <Badge variant="secondary">{date === 'today' ? '今天' : date === 'yesterday' ? '昨天' : date}</Badge>}
         </CardHeader>
         <CardContent>
-          <ReportPreview text={gen.report} />
+          {format === 'md' ? (
+            <div className={cn(codeSurface, 'min-h-[120px] overflow-x-auto p-8 shadow-sm')}>
+              {displayReport ? <Markdown content={displayReport} /> : <span className="text-slate-500">点击「生成日报」后此处显示结果…</span>}
+            </div>
+          ) : (
+            <ReportPreview text={displayReport} />
+          )}
         </CardContent>
       </Card>
     </div>

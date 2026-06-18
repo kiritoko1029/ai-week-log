@@ -76,6 +76,15 @@ export function NotesPage() {
   const [pendingSummaryUsageText, setPendingSummaryUsageText] = useState('')
   const [expandedPendingNoteIds, setExpandedPendingNoteIds] = useState<string[]>([])
 
+  // 时间线多选 + AI 精简（笔记无 id，用 date|project|content 复合键）
+  const [selectedTimelineKeys, setSelectedTimelineKeys] = useState<Set<string>>(new Set())
+  const [timelineBusy, setTimelineBusy] = useState(false)
+  const [timelineDraft, setTimelineDraft] = useState('')
+  const [timelineUsage, setTimelineUsage] = useState('')
+  // 写入草稿时的目标日期/项目（默认取首条选中笔记）
+  const [timelineDraftDate, setTimelineDraftDate] = useState(todayISO())
+  const [timelineDraftProject, setTimelineDraftProject] = useState('')
+
   // AI 记忆推断（写笔记时辅助）
   const [inferResult, setInferResult] = useState<MemoryInferResult | null>(null)
   const [inferring, setInferring] = useState(false)
@@ -205,6 +214,87 @@ export function NotesPage() {
     })
     return [...map.keys()].sort().reverse().map((date) => ({ date, items: map.get(date)! }))
   }, [filtered])
+
+  // 时间线多选辅助：复合键（笔记无 id）
+  const timelineKey = useCallback((n: Note) => `${n.date}|${n.project ?? ''}|${n.content}`, [])
+  const selectedTimelineNotes = useMemo(
+    () => filtered.filter((n) => selectedTimelineKeys.has(timelineKey(n))),
+    [filtered, selectedTimelineKeys, timelineKey]
+  )
+  const toggleTimelineNote = useCallback((n: Note) => {
+    const k = timelineKey(n)
+    setSelectedTimelineKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
+  }, [timelineKey])
+
+  // 切换筛选/范围时，清理失效的选中键，避免悬空
+  useEffect(() => {
+    setSelectedTimelineKeys((prev) => {
+      if (!prev.size) return prev
+      const valid = new Set(filtered.map(timelineKey))
+      let changed = false
+      const next = new Set<string>()
+      prev.forEach((k) => {
+        if (valid.has(k)) next.add(k)
+        else changed = true
+      })
+      return changed ? next : prev
+    })
+  }, [filtered, timelineKey])
+
+  // AI 精简选中笔记
+  const summarizeSelectedTimelineNotes = useCallback(async () => {
+    if (!selectedTimelineNotes.length) return
+    setTimelineBusy(true)
+    setTimelineUsage('')
+    try {
+      const r = await api.notes.summarize(selectedTimelineNotes)
+      if (r.error) {
+        toast.error('AI 精简失败', { description: r.error })
+        return
+      }
+      if (r.text) {
+        const usageText =
+          r.inputTokens !== undefined || r.outputTokens !== undefined
+            ? `输入 ${formatTokenK(r.inputTokens)} / 输出 ${formatTokenK(r.outputTokens)} token`
+            : ''
+        setTimelineDraft(r.text)
+        setTimelineUsage(usageText)
+        // 默认写入首条选中笔记的日期/项目
+        const first = selectedTimelineNotes[0]
+        setTimelineDraftDate(first.date)
+        setTimelineDraftProject(first.project || '')
+        toast.success('AI 精简已生成，可编辑后写入', usageText ? { description: usageText } : undefined)
+      }
+    } catch (e) {
+      toast.error('AI 精简失败', { description: (e as Error).message })
+    } finally {
+      setTimelineBusy(false)
+    }
+  }, [selectedTimelineNotes])
+
+  // 把精简草稿写入笔记
+  const writeTimelineDraft = useCallback(async () => {
+    const content = timelineDraft.trim()
+    if (!content) return
+    setTimelineBusy(true)
+    try {
+      await api.notes.add({ date: timelineDraftDate, project: timelineDraftProject, content })
+      toast.success('已写入精简小记')
+      setSelectedTimelineKeys(new Set())
+      setTimelineDraft('')
+      setTimelineUsage('')
+      await Promise.all([loadNotes(), refreshRaw(timelineDraftDate || todayISO())])
+    } catch (e) {
+      toast.error('写入失败', { description: (e as Error).message })
+    } finally {
+      setTimelineBusy(false)
+    }
+  }, [timelineDraft, timelineDraftDate, timelineDraftProject, loadNotes, refreshRaw])
 
   const projects = config?.repos.map((r) => ({ value: r.name, label: r.alias || r.name })) ?? []
   const selectedPendingSet = useMemo(() => new Set(selectedPendingIds), [selectedPendingIds])
@@ -572,8 +662,53 @@ export function NotesPage() {
             <RefreshCw />
             刷新
           </Button>
+          <Button
+            size="sm"
+            onClick={summarizeSelectedTimelineNotes}
+            disabled={timelineBusy || selectedTimelineNotes.length === 0}
+            className="bg-violet-600 text-white hover:bg-violet-600/90"
+          >
+            {timelineBusy ? <Loader2 className="animate-spin" /> : <WandSparkles />}
+            AI 精简选中{selectedTimelineNotes.length > 0 ? ` (${selectedTimelineNotes.length})` : ''}
+          </Button>
         </div>
       </div>
+
+      {/* AI 精简草稿（时间线） */}
+      {timelineDraft && (
+        <div className="space-y-2 rounded-md border border-violet-300/70 bg-violet-50/60 p-3 dark:border-violet-800/70 dark:bg-violet-950/20">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label>AI 精简草稿</Label>
+            {timelineUsage && <Badge variant="secondary" className="font-mono">{timelineUsage}</Badge>}
+          </div>
+          <Textarea
+            value={timelineDraft}
+            onChange={(e) => setTimelineDraft(e.target.value)}
+            className="min-h-[96px]"
+          />
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs">写入日期</Label>
+              <Input type="date" value={timelineDraftDate} onChange={(e) => setTimelineDraftDate(e.target.value)} className="h-8 w-auto" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">写入项目</Label>
+              <ProjectSelect
+                value={timelineDraftProject}
+                onChange={setTimelineDraftProject}
+                options={projects}
+              />
+            </div>
+            <Button size="sm" onClick={writeTimelineDraft} disabled={timelineBusy || !timelineDraft.trim()} className="bg-violet-600 text-white hover:bg-violet-600/90">
+              <Plus />
+              写入精简小记
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => { setTimelineDraft(''); setTimelineUsage('') }} disabled={timelineBusy}>
+              清空草稿
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* 时间线 */}
       {loading ? (
@@ -596,7 +731,13 @@ export function NotesPage() {
               </div>
               <div className="space-y-2">
                 {day.items.map((n, i) => (
-                  <NoteCard key={i} note={n} miscProject={miscProject} />
+                  <NoteCard
+                    key={i}
+                    note={n}
+                    miscProject={miscProject}
+                    selected={selectedTimelineKeys.has(timelineKey(n))}
+                    onToggle={() => toggleTimelineNote(n)}
+                  />
                 ))}
               </div>
             </div>

@@ -98,5 +98,70 @@ console.log('\n[7] LLM 异常体系')
 const { LLMAuthError, LLMRateLimited } = require('../src/main/llm/base')
 ok('异常类可实例化', new LLMAuthError('x') instanceof Error && new LLMRateLimited('y') instanceof Error)
 
+console.log('\n[8] 渲染 compact 格式')
+{
+  const report2 = {
+    rangeStart: new Date(2026, 5, 9), rangeEnd: new Date(2026, 5, 13),
+    days: [
+      { day: new Date(2026, 5, 9), paragraphs: [{ project: '前端', text: '总结A。' }, { project: '后端', text: '总结B。' }] },
+      { day: new Date(2026, 5, 10), paragraphs: [{ project: '前端', text: '总结C。' }] },
+    ],
+    failedUnits: [],
+  }
+  const compact = R.renderCompact(report2)
+  ok('每天一行', compact.split('\n').length === 2, 'lines=' + compact.split('\n').length + ' :: ' + compact)
+  ok('同日段落连排', /2026\/6\/9 【前端】：总结A。【后端】：总结B。/.test(compact), compact)
+  ok('次日照常换行', compact.includes('2026/6/10 【前端】：总结C。'), compact)
+}
+
+console.log('\n[9] 三格式互转 convertFormat')
+{
+  const report3 = {
+    rangeStart: new Date(2026, 5, 9), rangeEnd: new Date(2026, 5, 13),
+    days: [
+      { day: new Date(2026, 5, 9), paragraphs: [{ project: '前端', text: '总结A。' }, { project: '后端', text: '总结B。' }] },
+      { day: new Date(2026, 5, 10), paragraphs: [{ project: '前端', text: '总结C。' }] },
+    ],
+    failedUnits: [],
+  }
+  const text = R.renderText(report3)
+  const compact = R.renderCompact(report3)
+  const md = R.renderMarkdown(report3)
+
+  // text → compact
+  const t2c = R.convertFormat(text, { from: 'text', to: 'compact' })
+  ok('text→compact 每天一行', t2c.split('\n').length === 2, t2c)
+  ok('text→compact 连排正确', t2c.includes('2026/6/9 【前端】：总结A。【后端】：总结B。'), t2c)
+
+  // compact → text
+  const c2t = R.convertFormat(compact, { from: 'compact', to: 'text' })
+  ok('compact→text 日期块独立行', /2026\/6\/9\n【前端】：总结A。\n【后端】：总结B。/.test(c2t), c2t)
+
+  // md → text
+  const m2t = R.convertFormat(md, { from: 'md', to: 'text' })
+  ok('md→text 去除标记', m2t.includes('2026/6/9') && /【前端】：总结A。/.test(m2t) && !m2t.includes('**'), m2t)
+
+  // text → md
+  const t2m = R.convertFormat(text, { from: 'text', to: 'md' })
+  ok('text→md 含标题', /# 工作周报/.test(t2m), t2m)
+  ok('text→md 段落标记', t2m.includes('- **【前端】**：总结A。'), t2m)
+
+  // 任意两两转换后回到 compact 应等价（往返保真）
+  const c2m2c = R.convertFormat(R.convertFormat(compact, { from: 'compact', to: 'md' }), { from: 'md', to: 'compact' })
+  ok('compact→md→compact 往返', c2m2c === compact, 'got: ' + JSON.stringify(c2m2c) + '\nexp: ' + JSON.stringify(compact))
+
+  const t2c2t = R.convertFormat(R.convertFormat(text, { from: 'text', to: 'compact' }), { from: 'compact', to: 'text' })
+  ok('text→compact→text 往返', t2c2t === text, 'got: ' + JSON.stringify(t2c2t) + '\nexp: ' + JSON.stringify(text))
+}
+
+console.log('\n[10] convertFormat 容错')
+{
+  // 无法解析的内容回退原文本
+  const garbage = '这是一段无法解析的随机文本\n没有日期也没有项目'
+  ok('无法解析回退原文', R.convertFormat(garbage, { from: 'text', to: 'compact' }) === garbage)
+  ok('空文本安全', R.convertFormat('', { from: 'text', to: 'md' }) === '')
+  ok('同格式原样返回', R.convertFormat('abc', { from: 'text', to: 'text' }) === 'abc')
+}
+
 console.log(`\n结果：${pass} 通过，${fail} 失败\n`)
 process.exit(fail ? 1 : 0)
