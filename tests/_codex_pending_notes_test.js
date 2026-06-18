@@ -52,6 +52,16 @@ async function main() {
       ok('清理 changedFiles 非字符串项', saved.changedFiles.length === 1 && saved.changedFiles[0] === 'src/main/ipc.js')
       const list = P.listPendingNotes(dir)
       ok('列表只返回 pending 候选项', list.length === 1 && list[0].id === saved.id)
+      let emptyRejected = false
+      try {
+        P.addPendingNote(dir, {
+          cwd: '/Users/me/apps/weeklog',
+          summary: '   ',
+        }, cfg())
+      } catch {
+        emptyRejected = true
+      }
+      ok('空任务摘要不会进入待处理池', emptyRejected && P.listPendingNotes(dir).length === 1)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
@@ -89,6 +99,81 @@ async function main() {
     }
   }
 
+  console.log('\n[2b] normalize captured summary')
+  {
+    const dir = tmpDir()
+    try {
+      const saved = P.addPendingNote(dir, {
+        cwd: '/Users/me/apps/weeklog',
+        summary: [
+          '修复了 Codex Hook 摘要清洗逻辑。',
+          '',
+          '<oai-mem-citation>',
+          '<citation_entries>',
+          'MEMORY.md:123-132|note=[checked ai-week-log repo memory context before UI work]',
+          '</citation_entries>',
+          '<rollout_ids>',
+          '019ed4b6-e8a8-74e3-833a-5957df342b13',
+          '</rollout_ids>',
+          '</oai-mem-citation>',
+        ].join('\n'),
+      }, cfg())
+      ok('入池时移除记忆引用元信息', saved.summary === '修复了 Codex Hook 摘要清洗逻辑。', saved.summary)
+      const legacy = {
+        schemaVersion: 1,
+        items: [
+          {
+            id: 'legacy-citation',
+            source: 'codex',
+            status: 'pending',
+            cwd: '/Users/me/apps/weeklog',
+            project: 'WeekLog',
+            summary: [
+              '旧候选项里带有记忆引用。',
+              '',
+              '<oai-mem-citation>',
+              '<citation_entries>',
+              'MEMORY.md:123-132|note=[checked ai-week-log repo memory context before UI work]',
+              '</citation_entries>',
+              '</oai-mem-citation>',
+            ].join('\n'),
+            changedFiles: [],
+            createdAt: '2026-06-17T09:00:00.000Z',
+          },
+          {
+            id: 'legacy-empty-after-clean',
+            source: 'codex',
+            status: 'pending',
+            cwd: '/Users/me/apps/weeklog',
+            project: 'WeekLog',
+            summary: [
+              '<oai-mem-citation>',
+              '<citation_entries>',
+              'MEMORY.md:123-132|note=[checked ai-week-log repo memory context before UI work]',
+              '</citation_entries>',
+              '</oai-mem-citation>',
+            ].join('\n'),
+            changedFiles: [],
+            createdAt: '2026-06-17T08:00:00.000Z',
+          },
+        ],
+      }
+      P.writeStore(dir, legacy)
+      const listed = P.listPendingNotes(dir)
+      ok('读取旧候选项时也清理记忆引用元信息', listed.length === 1 && listed[0].summary === '旧候选项里带有记忆引用。', JSON.stringify(listed))
+      const notesDir = path.join(dir, 'notes')
+      P.writePendingNotes(dir, {
+        ids: ['legacy-citation'],
+        notesDir,
+        miscProject: '日常工作',
+      })
+      const text = N.getNoteText(notesDir, '2026-06-17')
+      ok('写入旧候选项时不带记忆引用元信息', text.includes('旧候选项里带有记忆引用。') && !text.includes('<oai-mem-citation>'), text)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
   console.log('\n[3] summarize selected notes')
   {
     const dir = tmpDir()
@@ -100,7 +185,15 @@ async function main() {
       }, cfg())
       const b = P.addPendingNote(dir, {
         cwd: '/Users/me/apps/weeklog',
-        summary: '补充批量写入待处理小记的界面。',
+        summary: [
+          '补充批量写入待处理小记的界面。',
+          '',
+          '<oai-mem-citation>',
+          '<citation_entries>',
+          'MEMORY.md:123-132|note=[checked ai-week-log repo memory context before UI work]',
+          '</citation_entries>',
+          '</oai-mem-citation>',
+        ].join('\n'),
         changedFiles: ['src/renderer/src/pages/NotesPage.tsx'],
       }, cfg())
       let seenSystem = ''
@@ -116,6 +209,7 @@ async function main() {
       ok('返回模型总结文本', r.text.includes('Codex hook 小记待处理池'), r.text)
       ok('系统提示要求只输出笔记内容', /直接输出/.test(seenSystem), seenSystem)
       ok('用户提示包含两条候选摘要', seenUser.includes('本地 HTTP 接口') && seenUser.includes('批量写入'), seenUser)
+      ok('AI 总结提示不包含记忆引用元信息', !seenUser.includes('<oai-mem-citation>'), seenUser)
       ok('AI 总结不改变 pending 状态', P.listPendingNotes(dir).length === 2)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })

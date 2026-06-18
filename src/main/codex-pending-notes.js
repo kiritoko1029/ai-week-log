@@ -9,6 +9,7 @@ const fs = require('fs')
 const path = require('path')
 const notes = require('./notes')
 const { isoDate } = require('./utils')
+const { sanitizeCodexSummary } = require('./codex-summary')
 
 const FILE = 'codex-notes-pending.json'
 const MAX_SUMMARY_LENGTH = 4000
@@ -27,7 +28,14 @@ function readStore(dir) {
     const file = filePath(dir)
     if (fs.existsSync(file)) {
       const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-      if (data && Array.isArray(data.items)) return data
+      if (data && Array.isArray(data.items)) {
+        return {
+          ...data,
+          items: data.items
+            .map(normalizeStoredItem)
+            .filter((item) => !item || item.status !== 'pending' || item.summary),
+        }
+      }
     }
   } catch (e) {
     console.error('[weeklog] Codex 待处理小记读取失败：', e.message)
@@ -92,7 +100,7 @@ function matchProject(cwd, cfg = {}) {
 }
 
 function normalizePayload(payload = {}, cfg = {}) {
-  const summary = truncate(payload.summary || payload.content || payload.text, MAX_SUMMARY_LENGTH)
+  const summary = sanitizeCodexSummary(payload.summary || payload.content || payload.text)
   if (!summary) throw new Error('summary 不能为空')
   const cwd = normalizeCwd(payload.cwd)
   const createdAt = normalizeIso(payload.finishedAt || payload.createdAt)
@@ -107,6 +115,14 @@ function normalizePayload(payload = {}, cfg = {}) {
     changedFiles: normalizeChangedFiles(payload.changedFiles),
     title: truncate(payload.title, 200),
     createdAt,
+  }
+}
+
+function normalizeStoredItem(item) {
+  if (!item || typeof item !== 'object') return item
+  return {
+    ...item,
+    summary: sanitizeCodexSummary(item.summary),
   }
 }
 

@@ -517,7 +517,7 @@ export interface WeeklogAPI {
     list: () => Promise<CodexPendingNote[]>
     delete: (ids: string[]) => Promise<{ deleted: number }>
     write: (q: { ids: string[]; project?: string; content?: string }) => Promise<{ written: number; files: string[] }>
-    summarize: (ids: string[]) => Promise<{ text?: string; model?: string; error?: string }>
+    summarize: (ids: string[]) => Promise<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>
     status: () => Promise<CodexHookStatus>
     copyConfig: () => Promise<CodexHookCopyConfigResult>
     installHook: () => Promise<CodexHookInstallResult>

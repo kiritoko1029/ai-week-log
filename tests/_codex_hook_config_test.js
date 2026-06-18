@@ -48,6 +48,45 @@ ok('generated hook has stable WeekLog marker', hookConfig.isManagedWeekLogHook(h
 ok('generated hook does not add custom schema fields', !Object.prototype.hasOwnProperty.call(hook, 'weeklogHookId'))
 ok('generated config snippet uses Stop hook', hookConfig.buildCodexHookSnippet({ endpoint: 'http://127.0.0.1:17321/api/codex/pending-notes', token: 'token-a' }).includes('"Stop"'))
 
+console.log('\n[1b] summary extraction')
+ok(
+  'summary prefers Codex final response fields',
+  hookConfig.deriveCodexSummary({
+    changedFiles: ['src/main/ipc.js'],
+    final_response: '实现了 Codex Hook 小记待处理池，并补充一键安装。'
+  }) === '实现了 Codex Hook 小记待处理池，并补充一键安装。'
+)
+const transcriptPath = path.join(dir, 'transcript.jsonl')
+fs.writeFileSync(transcriptPath, [
+  JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '帮我修 hook 摘要' }] } }),
+  JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '修复了 Stop hook 摘要提取逻辑，候选小记现在会记录任务要点。' }] } }),
+].join('\n'), 'utf8')
+ok(
+  'summary can be read from transcript path',
+  hookConfig.deriveCodexSummary({ transcript_path: transcriptPath }) === '修复了 Stop hook 摘要提取逻辑，候选小记现在会记录任务要点。'
+)
+ok(
+  'missing summary returns empty instead of placeholder or changed files',
+  hookConfig.deriveCodexSummary({ changedFiles: ['only/file.ts'] }) === ''
+)
+ok('generated hook skips POST when summary is empty', hookConfig.buildHookScript({ endpoint: 'http://127.0.0.1:17321/api/codex/pending-notes', token: 'token-a' }).includes('if (!summary) process.exit(0)'))
+const memoryCitationText = [
+  '优化了 Codex Hook 待处理小记池展示，让摘要更醒目。',
+  '',
+  '<oai-mem-citation>',
+  '<citation_entries>',
+  'MEMORY.md:123-132|note=[checked ai-week-log repo memory context before UI work]',
+  '</citation_entries>',
+  '<rollout_ids>',
+  '019ed4b6-e8a8-74e3-833a-5957df342b13',
+  '</rollout_ids>',
+  '</oai-mem-citation>',
+].join('\n')
+ok(
+  'summary strips Codex memory citation metadata',
+  hookConfig.deriveCodexSummary({ final_response: memoryCitationText }) === '优化了 Codex Hook 待处理小记池展示，让摘要更醒目。'
+)
+
 console.log('\n[2] install preserves user hooks')
 fs.writeFileSync(hooksPath, JSON.stringify({
   hooks: {

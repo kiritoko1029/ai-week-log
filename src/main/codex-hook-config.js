@@ -9,6 +9,11 @@
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const {
+  MAX_SUMMARY_CHARS,
+  stripCodexMetadata,
+  trimSummary,
+} = require('./codex-summary')
 
 const WEEKLOG_HOOK_ID = 'weeklog-codex-pending-note'
 const WEEKLOG_STATUS_MESSAGE = `Saving Codex pending note (${WEEKLOG_HOOK_ID})`
@@ -48,6 +53,101 @@ function writeHooksFile(file, config) {
   fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n', 'utf8')
 }
 
+function textFromValue(value, depth = 0) {
+  if (depth > 4 || value == null) return ''
+  if (typeof value === 'string') return value.trim()
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => textFromValue(item, depth + 1))
+      .filter(Boolean)
+      .join('\n\n')
+      .trim()
+  }
+  if (typeof value === 'object') {
+    for (const key of ['text', 'content', 'value', 'message', 'summary', 'final_message', 'finalMessage', 'final_response', 'finalResponse']) {
+      const picked = textFromValue(value[key], depth + 1)
+      if (picked) return picked
+    }
+  }
+  return ''
+}
+
+function firstText(...values) {
+  for (const value of values) {
+    const text = textFromValue(value)
+    if (text) return trimSummary(text)
+  }
+  return ''
+}
+
+function readTranscriptSummary(transcriptPath, fsModule = fs) {
+  const file = textFromValue(transcriptPath)
+  if (!file) return ''
+  try {
+    if (!fsModule.existsSync(file)) return ''
+    const stat = fsModule.statSync(file)
+    if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return ''
+    const raw = fsModule.readFileSync(file, 'utf8')
+    let lastAssistantText = ''
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue
+      let item
+      try {
+        item = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const payload = item && (item.payload || item)
+      const role = payload && (payload.role || payload.author || (payload.message && payload.message.role))
+      const type = payload && payload.type
+      const isAssistant =
+        role === 'assistant' ||
+        type === 'assistant_message' ||
+        type === 'assistant' ||
+        (type === 'message' && role === 'assistant')
+      if (!isAssistant) continue
+      const text = firstText(payload.content, payload.message && payload.message.content, payload.text, payload.delta)
+      if (text) lastAssistantText = text
+    }
+    return lastAssistantText
+  } catch {
+    return ''
+  }
+}
+
+function deriveCodexSummary(event, opts = {}) {
+  const e = event && typeof event === 'object' ? event : {}
+  const direct = firstText(
+    e.final_response,
+    e.finalResponse,
+    e.final_message,
+    e.finalMessage,
+    e.assistant_response,
+    e.assistantResponse,
+    e.assistant_message,
+    e.assistantMessage,
+    e.output_text,
+    e.outputText,
+    e.summary,
+    e.result && e.result.final_response,
+    e.result && e.result.finalResponse,
+    e.result && e.result.final_message,
+    e.result && e.result.finalMessage,
+    e.result && e.result.summary,
+    e.turn && e.turn.final_response,
+    e.turn && e.turn.finalResponse,
+    e.turn && e.turn.final_message,
+    e.turn && e.turn.finalMessage,
+    e.turn && e.turn.summary
+  )
+  if (direct) return direct
+  const fromTranscript = readTranscriptSummary(
+    firstText(e.transcript_path, e.transcriptPath, e.transcript_file, e.transcriptFile, e.transcript),
+    opts.fs || fs
+  )
+  return fromTranscript
+}
+
 function buildHookScript({ endpoint, token }) {
   return `
 const fs = require('fs')
@@ -71,24 +171,16 @@ function parseInput() {
     return {}
   }
 }
-function pickText(...values) {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim()) return value.trim()
-  }
-  return ''
-}
+const MAX_SUMMARY_CHARS = ${MAX_SUMMARY_CHARS}
+${stripCodexMetadata.toString()}
+${trimSummary.toString()}
+${textFromValue.toString()}
+${firstText.toString()}
+${readTranscriptSummary.toString()}
+${deriveCodexSummary.toString()}
 const event = parseInput()
-const summary = pickText(
-  event.summary,
-  event.final_message,
-  event.finalMessage,
-  event.message,
-  event.response,
-  event.output_text,
-  event.output,
-  event.result && event.result.summary,
-  event.turn && event.turn.summary
-) || 'Codex 完成了一次任务，请在 WeekLog 中补充或编辑这条待处理小记。'
+const summary = deriveCodexSummary(event, { fs })
+if (!summary) process.exit(0)
 const changed = run('git', ['diff', '--name-only', 'HEAD'])
   .split(/\\r?\\n/)
   .map((line) => line.trim())
@@ -102,7 +194,7 @@ const payload = JSON.stringify({
   source: 'codex',
   cwd: process.cwd(),
   summary,
-  title: pickText(event.title, event.prompt),
+  title: firstText(event.title, event.prompt),
   branch: run('git', ['branch', '--show-current']) || run('git', ['rev-parse', '--short', 'HEAD']),
   changedFiles,
   finishedAt: new Date().toISOString(),
@@ -237,6 +329,7 @@ module.exports = {
   WEEKLOG_STATUS_MESSAGE,
   defaultHooksPath,
   buildHookScript,
+  deriveCodexSummary,
   buildCodexPendingNoteHook,
   buildCodexHookSnippet,
   isManagedWeekLogHook,
