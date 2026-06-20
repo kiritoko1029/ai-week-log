@@ -1,12 +1,17 @@
 /**
- * Tauri 2 版渲染层桥接（骨架阶段）。
+ * Tauri 2 版渲染层桥接。
  *
  * 与 Electron 版（window.weeklog / src/preload/index.js）等价的 API 表面，
  * 内部改用 @tauri-apps/api 的 invoke() / listen() 调用 Rust 后端。
  *
- * 骨架阶段仅实现：config.get、env.gitOk、quicknote.hide/onShow、shell.openExternal。
- * 其余方法走 todo() 返回空值（不抛错），让页面能渲染空状态、验证骨架完整性。
- * 后续阶段逐步用真实 command 替换。命名约定：ipcMain.handle('a:b') → Rust a_b。
+ * 已接通：config、env、secrets、repo、notes（含 summarize/replaceSummarized）、report、
+ *   prefs（含 extract）、ai.test、collect、generate、history、dialog、logs、tasks、ui、
+ *   shortcut、quicknote、shell、webdav.*、localBackup、codexNotes.*、zcodeNotes.*。
+ * 已接通（续）：chat.*（SSE 流式问答 + 报告意图 + 会话存储，事件 chat:stream）、
+ *   memory.*（索引/检索/队列/状态/重建/推断；API 嵌入 + 关键词预筛，本地 ONNX 嵌入待 ort 集成）、
+ *   updates.*（手动 GitHub 更新器：查版本/下载/打开安装包，事件 updates:update）。
+ * 全部 WeeklogAPI 方法均已接通真实 invoke/listen（无 todo 占位）。
+ * 命名约定：ipcMain.handle('a:b') → Rust command a_b；JS 传 camelCase 参数，Tauri 自动转 snake_case。
  */
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -16,12 +21,14 @@ import type {
   BackgroundTask,
   ChatSession,
   ChatSessionMeta,
+  ChatStreamPayload,
   CollectResult,
   Config,
   CodexHookCopyConfigResult,
   CodexHookInstallResult,
   CodexHookStatus,
   CodexPendingNote,
+  GenerateProgress,
   HistoryEntry,
   LocalBackupResult,
   MemoryIndexItem,
@@ -31,8 +38,11 @@ import type {
   MemoryStatus,
   Note,
   Report,
+  Repo,
   SecretStatusResult,
   ScannedRepo,
+  TaskUpdatePayload,
+  UpdatePayload,
   UpdateStatus,
   WebdavBackupInfo,
   WebdavBackupResult,
@@ -48,151 +58,189 @@ import type {
   ZcodeHookStatus,
   ZcodePendingNote,
   AiTestResult,
-  Repo,
 } from '@/types/weeklog'
 
 /**
- * 骨架阶段未实现方法的占位：打印警告并返回传入的空值（不抛错），
- * 这样页面能渲染空状态、验证骨架完整性，而非整页崩溃。
+ * 订阅后端事件（对齐 Electron 的 onXxx 返回 unsubscribe 语义）。
+ * 处理 listen() 异步注册期间被提前取消的竞态。
  */
-function todo<T>(name: string, fallback: T): Promise<T> {
-  console.warn(`[weeklog:tauri] 尚未实现: ${name}（骨架阶段，返回空值）`)
-  return Promise.resolve(fallback)
+function subscribe<T>(event: string, cb: (payload: T) => void): () => void {
+  let unlisten: UnlistenFn | undefined
+  let active = true
+  void listen<T>(event, (e) => {
+    if (active) cb(e.payload)
+  }).then((fn) => {
+    if (!active) fn()
+    else unlisten = fn
+  })
+  return () => {
+    active = false
+    unlisten?.()
+  }
 }
 
 export const api: WeeklogAPI = {
   config: {
     get: () => invoke<Config>('config_get'),
-    save: (cfg) => todo('config.save', cfg),
-    reset: () => todo('config.reset', {} as Config),
-    notesDir: () => todo('config.notesDir', ''),
+    save: (cfg) => invoke<Config>('config_save', { cfg }),
+    reset: () => invoke<Config>('config_reset'),
+    notesDir: () => invoke<string>('config_notes_dir'),
   },
   env: {
     gitOk: () => invoke<boolean>('env_git_ok'),
-    apiKeyStatus: () => todo('env.apiKeyStatus', false),
+    apiKeyStatus: () => invoke<boolean>('env_api_key_status'),
   },
   secrets: {
-    available: () => todo('secrets.available', false),
-    status: () => todo('secrets.status', { hasKey: false, available: false } as unknown as SecretStatusResult),
-    set: () => todo('secrets.set', undefined),
-    clear: () => todo('secrets.clear', undefined),
+    available: () => invoke<boolean>('secrets_available'),
+    status: (provider) => invoke<SecretStatusResult>('secrets_status', { provider }),
+    set: (provider, key) => invoke<void>('secrets_set', { provider, key }),
+    clear: (provider) => invoke<void>('secrets_clear', { provider }),
   },
   ai: {
-    test: () => todo('ai.test', { ok: false, message: '尚未实现' } as AiTestResult),
+    test: (cfg, apiKey) => invoke<AiTestResult>('ai_test', { cfg, apiKey }),
   },
   repo: {
-    validate: () => todo('repo.validate', { ok: false, branch: '' }),
-    add: () => todo('repo.add', { error: '尚未实现' }),
-    update: (_id, patch) => todo('repo.update', ({ repos: [], ...patch } as unknown) as Config),
-    remove: () => todo('repo.remove', {} as unknown as Config),
-    scan: () => todo('repo.scan', { repos: [] as ScannedRepo[], error: '尚未实现' }),
+    validate: (p) => invoke<{ ok: boolean; branch: string }>('repo_validate', { p }),
+    add: (r) => invoke<{ repo?: Repo; error?: string }>('repo_add', { r }),
+    update: (id, patch) => invoke<Config>('repo_update', { id, patch }),
+    remove: (id) => invoke<Config>('repo_remove', { id }),
+    scan: (rootDir, maxDepth) =>
+      invoke<{ repos: ScannedRepo[]; error: string | null }>('repo_scan', { rootDir, maxDepth }),
   },
   notes: {
-    add: () => todo('notes.add', { file: '' }),
-    getText: () => todo('notes.getText', ''),
-    saveText: () => todo('notes.saveText', { ok: false }),
-    list: () => todo('notes.list', [] as Note[]),
-    summarize: () => todo('notes.summarize', { error: '尚未实现' }),
-    replaceSummarized: () => todo('notes.replaceSummarized', { files: [] as string[] }),
+    add: (n) => invoke<{ file: string }>('notes_add', { n }),
+    getText: (date) => invoke<string>('notes_get_text', { date }),
+    saveText: (n) => invoke<{ ok: boolean }>('notes_save_text', { q: n }),
+    list: (q) => invoke<Note[]>('notes_list', { q }),
+    summarize: (items) =>
+      invoke<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>(
+        'notes_summarize',
+        { items },
+      ),
+    replaceSummarized: (q) => invoke<{ files: string[] }>('notes_replace_summarized', { q }),
   },
   report: {
-    convert: (q) => todo('report.convert', { text: q.text }),
+    convert: (q) => invoke<{ text: string }>('report_convert', { q }),
   },
   codexNotes: {
-    list: () => todo('codexNotes.list', [] as CodexPendingNote[]),
-    delete: () => todo('codexNotes.delete', { deleted: 0 }),
-    write: () => todo('codexNotes.write', { written: 0, files: [] as string[] }),
-    summarize: () => todo('codexNotes.summarize', { error: '尚未实现' }),
-    status: () => todo('codexNotes.status', ({ enabled: false, running: false, port: 17321 } as unknown) as CodexHookStatus),
-    copyConfig: () => todo('codexNotes.copyConfig', ({ ok: false } as unknown) as CodexHookCopyConfigResult),
-    installHook: () => todo('codexNotes.installHook', ({ ok: false } as unknown) as CodexHookInstallResult),
-    uninstallHook: () => todo('codexNotes.uninstallHook', ({ ok: false } as unknown) as CodexHookInstallResult),
+    list: () => invoke<CodexPendingNote[]>('codex_notes_list'),
+    delete: (ids) => invoke<{ deleted: number }>('codex_notes_delete', { ids }),
+    write: (q) =>
+      invoke<{ written: number; files: string[] }>('codex_notes_write', {
+        ids: q.ids,
+        project: q.project,
+        content: q.content,
+      }),
+    summarize: (ids) =>
+      invoke<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>(
+        'codex_notes_summarize',
+        { ids },
+      ),
+    status: () => invoke<CodexHookStatus>('codex_hook_status'),
+    copyConfig: () => invoke<CodexHookCopyConfigResult>('codex_hook_copy_config'),
+    installHook: () => invoke<CodexHookInstallResult>('codex_hook_install'),
+    uninstallHook: () => invoke<CodexHookInstallResult>('codex_hook_uninstall'),
   },
   zcodeNotes: {
-    list: () => todo('zcodeNotes.list', [] as ZcodePendingNote[]),
-    delete: () => todo('zcodeNotes.delete', { deleted: 0 }),
-    write: () => todo('zcodeNotes.write', { written: 0, files: [] as string[] }),
-    summarize: () => todo('zcodeNotes.summarize', { error: '尚未实现' }),
-    status: () => todo('zcodeNotes.status', ({ enabled: false, running: false, port: 17322 } as unknown) as ZcodeHookStatus),
-    copyConfig: () => todo('zcodeNotes.copyConfig', ({ ok: false } as unknown) as ZcodeHookCopyConfigResult),
-    installHook: () => todo('zcodeNotes.installHook', ({ ok: false } as unknown) as ZcodeHookInstallResult),
-    uninstallHook: () => todo('zcodeNotes.uninstallHook', ({ ok: false } as unknown) as ZcodeHookInstallResult),
+    list: () => invoke<ZcodePendingNote[]>('zcode_notes_list'),
+    delete: (ids) => invoke<{ deleted: number }>('zcode_notes_delete', { ids }),
+    write: (q) =>
+      invoke<{ written: number; files: string[] }>('zcode_notes_write', {
+        ids: q.ids,
+        project: q.project,
+        content: q.content,
+      }),
+    summarize: (ids) =>
+      invoke<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>(
+        'zcode_notes_summarize',
+        { ids },
+      ),
+    status: () => invoke<ZcodeHookStatus>('zcode_hook_status'),
+    copyConfig: () => invoke<ZcodeHookCopyConfigResult>('zcode_hook_copy_config'),
+    installHook: () => invoke<ZcodeHookInstallResult>('zcode_hook_install'),
+    uninstallHook: () => invoke<ZcodeHookInstallResult>('zcode_hook_uninstall'),
   },
-  collect: () => todo('collect', ({ stats: { commitCount: 0, noteCount: 0, noteProjectCount: 0, noteMiscCount: 0, bucketCount: 0, notesOnlyCount: 0, days: 0, estTokens: 0, repoErrors: [] }, range: { from: '', to: '' } } as unknown) as CollectResult),
-  generate: () => todo('generate', ({ text: '', failedUnits: [] } as unknown) as Report),
-  onProgress: () => () => {},
+  collect: (q) => invoke<CollectResult>('collect', { rangeOpts: q.rangeOpts, options: q.options }),
+  generate: (q) => invoke<Report>('generate', { rangeOpts: q.rangeOpts, options: q.options }),
+  onProgress: (cb) => subscribe<GenerateProgress>('generate:progress', cb),
   history: {
-    list: () => todo('history.list', [] as HistoryEntry[]),
-    save: (e) => todo('history.save', ({ id: '', createdAt: 0, ...e } as unknown) as HistoryEntry),
-    update: () => todo('history.update', { ok: false }),
+    list: () => invoke<HistoryEntry[]>('history_list'),
+    save: (e) => invoke<HistoryEntry>('history_save', { e }),
+    update: (id, text) => invoke<{ ok: boolean }>('history_update', { id, text }),
   },
   dialog: {
-    pickFolder: () => todo('dialog.pickFolder', null),
-    pickRepo: () => todo('dialog.pickRepo', null),
-    pickBackupFolder: () => todo('dialog.pickBackupFolder', null),
+    pickFolder: () => invoke<string | null>('dialog_pick_folder'),
+    pickRepo: () => invoke<string | null>('dialog_pick_repo'),
+    pickBackupFolder: () => invoke<string | null>('dialog_pick_backup_folder'),
   },
   webdav: {
-    test: () => todo('webdav.test', ({ ok: false, message: '尚未实现' } as unknown) as WebdavTestResult),
-    syncNow: () => todo('webdav.syncNow', ({ ok: false } as unknown) as WebdavSyncResult),
-    backupNow: () => todo('webdav.backupNow', ({ ok: false } as unknown) as WebdavBackupResult),
-    listBackups: () => todo('webdav.listBackups', [] as WebdavBackupInfo[]),
-    restoreBackup: () => todo('webdav.restoreBackup', ({ ok: false } as unknown) as WebdavRestoreResult),
-    status: () => todo('webdav.status', ({ configured: false } as unknown) as WebdavStatus),
-    savePassword: () => todo('webdav.savePassword', { ok: false }),
-    passwordStatus: () => todo('webdav.passwordStatus', ({ saved: false } as unknown) as WebdavPasswordStatusResult),
-    clearPassword: () => todo('webdav.clearPassword', { ok: false }),
+    test: (url, username, password) => invoke<WebdavTestResult>('webdav_test', { url, username, password }),
+    syncNow: (direction) => invoke<WebdavSyncResult>('webdav_sync_now', { direction }),
+    backupNow: () => invoke<WebdavBackupResult>('webdav_backup_now'),
+    listBackups: () => invoke<WebdavBackupInfo[]>('webdav_list_backups'),
+    restoreBackup: (name) => invoke<WebdavRestoreResult>('webdav_restore_backup', { name }),
+    status: () => invoke<WebdavStatus>('webdav_status'),
+    savePassword: (password) => invoke<{ ok: boolean }>('webdav_save_password', { password }),
+    passwordStatus: () => invoke<WebdavPasswordStatusResult>('webdav_password_status'),
+    clearPassword: () => invoke<{ ok: boolean }>('webdav_clear_password'),
   },
   localBackup: {
-    create: () => todo('localBackup.create', ({ ok: false, error: '尚未实现' } as unknown) as LocalBackupResult),
+    create: (dir) => invoke<LocalBackupResult>('local_backup_create', { dir }),
   },
   memory: {
-    list: () => todo('memory.list', [] as MemoryIndexItem[]),
-    search: () => todo('memory.search', [] as MemorySearchHit[]),
-    queueStatus: () => todo('memory.queueStatus', ({ pending: 0, total: 0, running: false } as unknown) as MemoryQueueStatus),
-    status: () => todo('memory.status', ({ ready: false, source: 'local', model: '', modelSource: 'auto' } as unknown) as MemoryStatus),
-    rebuild: () => todo('memory.rebuild', { generated: 0, failed: 0, error: '尚未实现' }),
-    remove: () => todo('memory.remove', { ok: false }),
-    inferProject: () => todo('memory.inferProject', ({ project: '' } as unknown) as MemoryInferResult),
+    list: () => invoke<MemoryIndexItem[]>('memory_list'),
+    search: (query, topK) => invoke<MemorySearchHit[]>('memory_search', { query, topK }),
+    queueStatus: () => invoke<MemoryQueueStatus>('memory_queue_status'),
+    status: () => invoke<MemoryStatus>('memory_status'),
+    rebuild: () => invoke<{ generated: number; failed: number; error?: string }>('memory_rebuild'),
+    remove: (id) => invoke<{ ok: boolean }>('memory_delete', { id }),
+    inferProject: (noteText) => invoke<MemoryInferResult>('memory_infer_project', { noteText }),
   },
   prefs: {
-    list: () => todo('prefs.list', [] as WritingPreference[]),
-    add: () => todo('prefs.add', { item: null }),
-    toggle: () => todo('prefs.toggle', { item: null }),
-    remove: () => todo('prefs.remove', { deleted: 0 }),
-    extract: () => todo('prefs.extract', { rule: '', error: '尚未实现' }),
+    list: () => invoke<WritingPreference[]>('prefs_list'),
+    add: (rule) => invoke<{ item: WritingPreference | null }>('prefs_add', { rule }),
+    toggle: (id, enabled) => invoke<{ item: WritingPreference | null }>('prefs_toggle', { id, enabled }),
+    remove: (id) => invoke<{ deleted: number }>('prefs_remove', { id }),
+    extract: (oldText, newText) =>
+      invoke<{ rule?: string; error?: string; model?: string; inputTokens?: number; outputTokens?: number }>(
+        'prefs_extract',
+        { oldText, newText },
+      ),
   },
   chat: {
-    sessions: () => todo('chat.sessions', [] as ChatSessionMeta[]),
-    getSession: () => todo('chat.getSession', null),
-    createSession: () => todo('chat.createSession', ({ id: '', title: '', messages: [] } as unknown) as ChatSession),
-    renameSession: () => todo('chat.renameSession', { ok: false }),
-    deleteSession: () => todo('chat.deleteSession', { ok: false }),
-    send: () => todo('chat.send', { error: '尚未实现' }),
-    generate: () => todo('chat.generate', { error: '尚未实现' }),
-    cancel: () => todo('chat.cancel', { ok: false }),
-    onStream: () => () => {},
+    sessions: () => invoke<ChatSessionMeta[]>('chat_sessions'),
+    getSession: (id) => invoke<ChatSession | null>('chat_session_get', { id }),
+    createSession: (title) => invoke<ChatSession>('chat_session_create', { title }),
+    renameSession: (id, title) => invoke<{ ok: boolean; title?: string }>('chat_session_rename', { id, title }),
+    deleteSession: (id) => invoke<{ ok: boolean }>('chat_session_delete', { id }),
+    send: (sessionId, content, context) =>
+      invoke<{ msgId?: string; error?: string }>('chat_send', { sessionId, content, context }),
+    generate: (sessionId, reportType, when) =>
+      invoke<{ msgId?: string; error?: string }>('chat_generate', { sessionId, reportType, when }),
+    cancel: (msgId) => invoke<{ ok: boolean }>('chat_cancel', { msgId }),
+    onStream: (cb) => subscribe<ChatStreamPayload>('chat:stream', cb),
   },
   tasks: {
-    list: () => todo('tasks.list', [] as BackgroundTask[]),
-    hasRunning: () => todo('tasks.hasRunning', false),
-    remove: () => todo('tasks.remove', { ok: false }),
-    clearFinished: () => todo('tasks.clearFinished', { ok: false }),
-    onUpdate: () => () => {},
+    list: () => invoke<BackgroundTask[]>('tasks_list'),
+    hasRunning: () => invoke<boolean>('tasks_has_running'),
+    remove: (id) => invoke<{ ok: boolean }>('tasks_remove', { id }),
+    clearFinished: () => invoke<{ ok: boolean }>('tasks_clear_finished'),
+    onUpdate: (cb) => subscribe<TaskUpdatePayload>('task:update', cb),
   },
   logs: {
-    list: () => todo('logs.list', [] as AppLogEntry[]),
-    clear: () => todo('logs.clear', { ok: false }),
-    path: () => todo('logs.path', ''),
+    list: (limit) => invoke<AppLogEntry[]>('logs_list', { limit }),
+    clear: () => invoke<{ ok: boolean }>('logs_clear'),
+    path: () => invoke<string>('logs_path'),
   },
   updates: {
-    status: () => todo('updates.status', ({ phase: 'idle', currentVersion: '', latestVersion: '', progress: null } as unknown) as UpdateStatus),
-    check: () => todo('updates.check', ({ phase: 'idle', currentVersion: '', latestVersion: '', progress: null } as unknown) as UpdateStatus),
-    download: () => todo('updates.download', ({ phase: 'idle', currentVersion: '', latestVersion: '', progress: null } as unknown) as UpdateStatus),
-    install: () => todo('updates.install', ({ phase: 'idle', currentVersion: '', latestVersion: '', progress: null } as unknown) as UpdateStatus),
-    onUpdate: () => () => {},
+    status: () => invoke<UpdateStatus>('updates_status'),
+    check: () => invoke<UpdateStatus>('updates_check'),
+    download: () => invoke<UpdateStatus>('updates_download'),
+    install: () => invoke<UpdateStatus>('updates_install'),
+    onUpdate: (cb) => subscribe<UpdatePayload>('updates:update', cb),
   },
   ui: {
-    setTheme: () => todo('ui.setTheme', false),
+    setTheme: (theme) => invoke<boolean>('ui_set_theme', { theme }),
   },
   shell: {
     openExternal: (url: string) => {
@@ -202,28 +250,15 @@ export const api: WeeklogAPI = {
     },
   },
   shortcut: {
-    apply: () => todo('shortcut.apply', { ok: false, accel: '' }),
-    suspend: () => todo('shortcut.suspend', false),
-    resume: () => todo('shortcut.resume', false),
+    apply: () => invoke<{ ok: boolean; accel: string }>('shortcut_apply'),
+    suspend: () => invoke<boolean>('shortcut_suspend'),
+    resume: () => invoke<boolean>('shortcut_resume'),
   },
   quicknote: {
     hide: () => {
       // fire-and-forget（对应 Electron 的 send）；忽略错误，窗口未创建时静默
       void invoke('quicknote_hide').catch(() => {})
     },
-    onShow: (cb: () => void) => {
-      let unlisten: UnlistenFn | undefined
-      let active = true
-      void listen('quicknote:show', () => {
-        if (active) cb()
-      }).then((fn) => {
-        if (!active) fn()
-        else unlisten = fn
-      })
-      return () => {
-        active = false
-        unlisten?.()
-      }
-    },
+    onShow: (cb: () => void) => subscribe<unknown>('quicknote:show', () => cb()),
   },
 }
