@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, createContext, useContext, useRef } from 'react'
+import { useState, useEffect, useCallback, createContext, useContext } from 'react'
 import { api } from '@/lib/api'
 import type { BackgroundTask, TaskUpdatePayload } from '@/types/weeklog'
 
@@ -21,7 +21,6 @@ const Ctx = createContext<TasksCtx | null>(null)
 
 export function TasksProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<BackgroundTask[]>([])
-  const initialized = useRef(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -32,10 +31,11 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // 首次挂载：拉取全部 + 订阅更新
+  // 挂载：拉取全部 + 订阅更新。
+  // 注意：不要加 initialized ref 守卫——StrictMode 下「卸载→重挂载」会先 off() 退订，
+  // 守卫又会阻止重挂载时重新订阅，导致订阅被自己拆掉、再也收不到 task:update。
+  // 裸订阅本身幂等且 StrictMode 安全（卸载退订、重挂载重订），多跑一次 refresh 无害。
   useEffect(() => {
-    if (initialized.current) return
-    initialized.current = true
     refresh()
     const off = api.tasks.onUpdate((payload: TaskUpdatePayload) => {
       if (payload.type === 'update' && payload.task) {

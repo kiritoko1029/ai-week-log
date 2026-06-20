@@ -254,6 +254,23 @@ function buildChatSystem(contextText) {
   return CHAT_SYSTEM_BASE + '\n\n【已知工作记录】\n' + contextText
 }
 
+const REFINE_SYSTEM_BASE = `你是 WeekLog 的报告润色助手。下面「待润色报告」是用户已生成的周报/日报，用户会用一句话给出修改指令。
+规则：
+- 严格按用户指令修改「待润色报告」，输出修改后的【完整报告】，保持原有格式、结构与未涉及的内容不变。
+- 只改用户要求改的地方，不要擅自增删或改写其他内容，不要编造项目、日期或成果。
+- 直接输出修改后的报告全文，不要附加「好的」「已为你修改」之类的解释、前言或结语。
+- 用简体中文。`
+
+/**
+ * 润色态 system：编辑者框架 + 待润色报告（refineReport 已含【待润色报告（…）】标签）。
+ * 检索到的工作记录作为参考附在末尾，避免与待改报告混淆。
+ */
+function buildRefineSystem(refineReport, reference) {
+  let s = REFINE_SYSTEM_BASE + '\n\n' + refineReport
+  if (reference && reference.trim()) s += '\n\n【参考工作记录】\n' + reference
+  return s
+}
+
 /** 把会话历史转为 provider messages，截断到最近 turns 轮 */
 function buildMessages(session, turns) {
   const all = ((session && session.messages) || []).filter(
@@ -286,10 +303,9 @@ async function askStream({ dir, cfg, apiKey, sessionId, content, history, notesD
   }
   emit({ type: 'refs', refs: ctx.refs })
 
-  // 额外注入上下文（如「送入对话润色」的报告文本）：前置到 contextText，优先级最高
-  const contextText = context && String(context).trim()
-    ? (String(context).trim() + (ctx.contextText ? '\n\n' + ctx.contextText : ''))
-    : ctx.contextText
+  // 润色态（context 为「送入对话润色」的报告文本）：用编辑者 system，要求输出修改后的
+  // 完整报告；检索到的工作记录降级为参考。普通问答仍走 buildChatSystem。
+  const refine = context && String(context).trim() ? String(context).trim() : ''
 
   let provider
   try {
@@ -302,7 +318,7 @@ async function askStream({ dir, cfg, apiKey, sessionId, content, history, notesD
   const session = getSession(dir, sessionId)
   const turns = (cfg.ai && cfg.ai.chat && cfg.ai.chat.historyTurns) || 12
   const msgs = buildMessages(session, turns)
-  const system = buildChatSystem(contextText)
+  const system = refine ? buildRefineSystem(refine, ctx.contextText) : buildChatSystem(ctx.contextText)
   const maxTokens = (cfg.ai && cfg.ai.chat && cfg.ai.chat.maxTokens) || undefined
   const thinking = !!(cfg.ai && cfg.ai.chat && cfg.ai.chat.thinking)
 
@@ -423,6 +439,7 @@ module.exports = {
   appendMessage,
   retrieveContext,
   buildChatSystem,
+  buildRefineSystem,
   buildMessages,
   keyTerms,
   askStream,

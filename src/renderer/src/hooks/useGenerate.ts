@@ -28,6 +28,8 @@ export function useGenerate() {
 
   const [report, setReport] = useState('')
   const [localStatus, setLocalStatus] = useState('')
+  // 最近一次生成所存历史条目的 id，供「去对话润色」后覆盖原报告用
+  const [historyId, setHistoryId] = useState<string | null>(null)
 
   // 从任务派生 status 展示文本（任务存在时优先用任务状态）
   const status = useMemo(() => {
@@ -48,6 +50,7 @@ export function useGenerate() {
     async (rangeOpts: GenerateRangeOpts, options: GenerateOptions, type: '周报' | '日报') => {
       setLocalStatus('采集 commit + 加载笔记…')
       setReport('')
+      setHistoryId(null)
       // 兼容旧 progress 订阅（主进程仍会发，避免 listener 泄漏）
       offRef.current = api.onProgress(() => {})
       try {
@@ -65,13 +68,14 @@ export function useGenerate() {
         const m = result.meta || {}
         setLocalStatus(`✓ 完成 · ${m.commitCount || 0} commits + ${m.noteCount || 0} 笔记 → ${m.bucketCount || 0} 段 · ${((m.durationMs || 0) / 1000).toFixed(1)}s${result.failedUnits.length ? ' · ' + result.failedUnits.length + ' 次降级' : ''}`)
         setReport(result.text || '（无内容）')
-        await api.history.save({
+        const saved = await api.history.save({
           type,
           rangeStart: result.rangeStart ? isoDate(new Date(result.rangeStart)) : '',
           rangeEnd: result.rangeEnd ? isoDate(new Date(result.rangeEnd)) : '',
           text: result.text || '',
           meta: m,
         })
+        setHistoryId(saved?.id ?? null)
         toast.success(`${type}生成完成`)
       } catch (e) {
         offRef.current?.()
@@ -84,5 +88,5 @@ export function useGenerate() {
     []
   )
 
-  return { busy, progress, status, report, run }
+  return { busy, progress, status, report, historyId, run }
 }

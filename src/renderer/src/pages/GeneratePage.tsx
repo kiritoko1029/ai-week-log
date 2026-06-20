@@ -163,7 +163,7 @@ export function GeneratePage() {
     [editText, displayReport, editing, lastRenderedFormat]
   )
 
-  // 送入 AI 对话润色：携带当前报告文本作为隐藏上下文
+  // 送入 AI 对话润色：携带当前报告文本作为隐藏上下文（historyId 让润色结果可覆盖回此报告）
   const goRefine = useCallback(() => {
     const text = editing ? editText : displayReport
     if (!text) return
@@ -171,8 +171,9 @@ export function GeneratePage() {
       kind: 'reportRefine',
       reportText: text,
       reportType: mode === 'daily' ? '日报' : '周报',
+      historyId: gen.historyId ?? undefined,
     })
-  }, [editText, displayReport, editing, mode, navigate])
+  }, [editText, displayReport, editing, mode, navigate, gen.historyId])
 
   return (
     <div className="space-y-6">

@@ -15,12 +15,12 @@ import {
   GitCommit,
   ArrowRight,
   Loader2,
+  FileCheck2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
 import { useNav } from '@/hooks/useNav'
-import type { ReportRefinePayload } from '@/hooks/useNav'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -176,11 +176,22 @@ export function ChatPage() {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
 
-  // 「报告润色」上下文：从导航 payload 取得，send 时作为 context 注入，发完即清
-  const reportContextRef = useRef<ReportRefinePayload | null>(null)
-  const [refineBanner, setRefineBanner] = useState<ReportRefinePayload | null>(null)
-  // 记录最近一次润色场景：{ 原始报告, AI回复 } 供「记住这个调整」用
-  const [rememberCtx, setRememberCtx] = useState<{ oldText: string; newText: string } | null>(null)
+  // 报告润色态（从导航 payload 进入，可多轮迭代）：
+  //  - refineOriginalRef：首版原始报告，供「记住这个调整」对比写作偏好
+  //  - refineWorkingRef：当前送入润色的报告文本（每轮更新为上一轮 AI 结果，实现链式迭代）
+  //  - refineMsgIdRef：本轮润色的 msgId，done 时据此认领结果（避免无关问答污染覆盖候选）
+  //  - refineTarget：覆盖目标元信息（historyId 决定能否覆盖）；refineReply：最近一轮 AI 输出的完整报告
+  const refineOriginalRef = useRef<string>('')
+  const refineWorkingRef = useRef<string>('')
+  const refineMsgIdRef = useRef<string | null>(null)
+  const [refineTarget, setRefineTarget] = useState<{
+    historyId?: string
+    reportType: '日报' | '周报'
+    rangeStart?: string
+    rangeEnd?: string
+  } | null>(null)
+  const [refineReply, setRefineReply] = useState('')
+  const [applying, setApplying] = useState(false)
   const [remembering, setRemembering] = useState(false)
 
   const activeIdRef = useRef<string | null>(null)
@@ -204,27 +215,44 @@ export function ChatPage() {
     setReportProgress(null)
   }, [])
 
+  // 退出润色态：清空覆盖目标与各轮文本（切换会话/新建/覆盖/完成时调用）
+  const exitRefine = useCallback(() => {
+    refineOriginalRef.current = ''
+    refineWorkingRef.current = ''
+    refineMsgIdRef.current = null
+    setRefineTarget(null)
+    setRefineReply('')
+  }, [])
+
   const openSession = useCallback(
     async (id: string) => {
       setActiveId(id)
       activeIdRef.current = id
       resetStream()
+      exitRefine()
       const s = await api.chat.getSession(id)
       setMessages(s?.messages || [])
     },
-    [resetStream]
+    [resetStream, exitRefine]
   )
 
   // 初始化：加载会话列表，选中最近一个；若有导航 payload（报告润色）则进入润色态
   useEffect(() => {
     ;(async () => {
       const payload = consumePayload()
-      if (payload && payload.kind === 'reportRefine' && payload.reportText) {
-        reportContextRef.current = payload
-        setRefineBanner(payload)
-      }
       const list = await loadSessions()
       if (list.length) await openSession(list[0].id)
+      // 在 openSession（内部会 exitRefine 重置）之后再设润色态，避免被清掉
+      if (payload && payload.kind === 'reportRefine' && payload.reportText) {
+        refineOriginalRef.current = payload.reportText
+        refineWorkingRef.current = payload.reportText
+        setRefineTarget({
+          historyId: payload.historyId,
+          reportType: payload.reportType,
+          rangeStart: payload.rangeStart,
+          rangeEnd: payload.rangeEnd,
+        })
+      }
     })()
   }, [loadSessions, openSession, consumePayload])
 
@@ -255,9 +283,16 @@ export function ChatPage() {
         setReportProgress({ stage: p.stage, done: p.done, total: p.total, project: p.project })
       } else if (p.type === 'done' || p.type === 'report_done') {
         if (p.sessionId === activeIdRef.current) setMessages((m) => [...m, p.message])
-        // 若处于润色「记住」上下文，捕获 AI 回复文本
-        if (p.message && p.message.role === 'assistant' && p.message.content) {
-          setRememberCtx((prev) => (prev ? { ...prev, newText: p.message.content } : prev))
+        // 认领润色结果：仅当这条 done 对应本轮润色 msgId，才更新覆盖候选 + 链接下一轮待改文本
+        if (
+          p.msgId === refineMsgIdRef.current &&
+          p.message &&
+          p.message.role === 'assistant' &&
+          p.message.content
+        ) {
+          setRefineReply(p.message.content)
+          refineWorkingRef.current = p.message.content
+          refineMsgIdRef.current = null
         }
         setStreaming(false)
         resetStream()
@@ -308,27 +343,26 @@ export function ChatPage() {
     const content = input.trim()
     if (!content || streaming) return
     const sid = await ensureSession()
-    // 若处于报告润色态，把报告作为 context 注入（仅本次发送）
-    const refine = reportContextRef.current
-    const context = refine ? `【待润色报告（${refine.reportType}）】\n${refine.reportText}` : undefined
+    // 润色态：把当前待改报告作为 context 注入（每轮用上一轮 AI 结果，实现链式迭代）
+    const refining = !!refineTarget
+    const context =
+      refining && refineWorkingRef.current
+        ? `【待润色报告（${refineTarget!.reportType}）】\n${refineWorkingRef.current}`
+        : undefined
     pushLocalUser(content)
     setInput('')
     setStreaming(true)
     resetStream()
+    setRefineReply('') // 开新一轮，先收起上一轮结果横幅
     const r = await api.chat.send(sid, content, context)
     if (r.error) {
       toast.error('发送失败', { description: r.error })
       setStreaming(false)
       return
     }
-    // 发送后清除润色态，记住本次润色的原始文本供「记住调整」用
-    if (refine) {
-      reportContextRef.current = null
-      setRefineBanner(null)
-      setRememberCtx({ oldText: refine.reportText, newText: '' })
-    }
     streamMsgIdRef.current = r.msgId || null
-  }, [input, streaming, ensureSession, pushLocalUser, resetStream])
+    if (refining) refineMsgIdRef.current = r.msgId || null
+  }, [input, streaming, ensureSession, pushLocalUser, resetStream, refineTarget])
 
   const quickGenerate = useCallback(
     async (reportType: 'daily' | 'weekly', when: string, label: string) => {
@@ -354,25 +388,44 @@ export function ChatPage() {
     if (streamMsgIdRef.current) await api.chat.cancel(streamMsgIdRef.current)
   }, [])
 
+  // 覆盖原报告：用最近一轮润色结果覆盖 historyId 对应的历史报告（用户确认满意后）
+  const applyRefine = useCallback(async () => {
+    const target = refineTarget
+    if (!target?.historyId || !refineReply.trim()) return
+    setApplying(true)
+    try {
+      const r = await api.history.update(target.historyId, refineReply)
+      if (r.ok) {
+        toast.success(`已覆盖原${target.reportType}`, { description: '更新后的报告可在「历史」查看' })
+        exitRefine()
+      } else {
+        toast.error('覆盖失败', { description: '未找到对应的历史报告，可能已被删除' })
+      }
+    } catch (e) {
+      toast.error('覆盖失败', { description: (e as Error).message })
+    } finally {
+      setApplying(false)
+    }
+  }, [refineTarget, refineReply, exitRefine])
+
   // 记住这次调整：AI 对比原始报告与调整后文本，抽取写作规则存入偏好库
   const rememberAdjustment = useCallback(async () => {
-    if (!rememberCtx || !rememberCtx.oldText || !rememberCtx.newText) return
+    const oldText = refineOriginalRef.current
+    if (!oldText || !refineReply.trim()) return
     setRemembering(true)
     try {
-      const r = await api.prefs.extract(rememberCtx.oldText, rememberCtx.newText)
+      const r = await api.prefs.extract(oldText, refineReply)
       if (r.error) {
         toast.error('抽取规则失败', { description: r.error })
         return
       }
       if (!r.rule || !r.rule.trim()) {
         toast('未发现可记住的写作偏好', { description: '本次修改更像是内容增删，而非措辞/风格调整' })
-        setRememberCtx(null)
         return
       }
       const add = await api.prefs.add(r.rule.trim())
       if (add.item) {
         toast.success('已记住这条写作偏好', { description: '下次生成报告将自动遵循：' + r.rule })
-        setRememberCtx(null)
       } else {
         toast.error('保存规则失败')
       }
@@ -381,7 +434,7 @@ export function ChatPage() {
     } finally {
       setRemembering(false)
     }
-  }, [rememberCtx])
+  }, [refineReply])
 
   const newChat = useCallback(async () => {
     const s = await api.chat.createSession()
@@ -390,7 +443,8 @@ export function ChatPage() {
     activeIdRef.current = s.id
     setMessages([])
     resetStream()
-  }, [loadSessions, resetStream])
+    exitRefine()
+  }, [loadSessions, resetStream, exitRefine])
 
   const removeSession = useCallback(
     async (id: string, e: React.MouseEvent) => {
@@ -587,35 +641,48 @@ export function ChatPage() {
         {/* 输入区 */}
         <div className="border-t p-3">
           {/* 报告润色横幅：已携带报告上下文，待用户输入修改指令 */}
-          {refineBanner && (
+          {refineTarget && !refineReply && !streaming && (
             <div className="mb-2 flex items-center justify-between gap-2 rounded-md border border-violet-300/70 bg-violet-50/70 px-3 py-2 dark:border-violet-800/70 dark:bg-violet-950/20">
               <div className="flex min-w-0 items-center gap-2 text-sm">
                 <FileText className="size-4 shrink-0 text-violet-600" />
                 <span className="truncate">
-                  正在润色 · {refineBanner.reportType}
-                  {refineBanner.rangeStart ? ` · ${refineBanner.rangeStart}${refineBanner.rangeEnd ? '~' + refineBanner.rangeEnd.slice(5) : ''}` : ''}
+                  正在润色 · {refineTarget.reportType}
+                  {refineTarget.rangeStart ? ` · ${refineTarget.rangeStart}${refineTarget.rangeEnd ? '~' + refineTarget.rangeEnd.slice(5) : ''}` : ''}
                 </span>
               </div>
               <button
-                onClick={() => { setRefineBanner(null); reportContextRef.current = null }}
+                onClick={exitRefine}
                 className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
               >
                 取消
               </button>
             </div>
           )}
-          {/* 记住调整横幅：AI 已回复调整后的报告，可一键抽取写作偏好 */}
-          {!streaming && rememberCtx && rememberCtx.newText && (
-            <div className="mb-2 flex items-center justify-between gap-2 rounded-md border border-amber-300/70 bg-amber-50/70 px-3 py-2 dark:border-amber-800/70 dark:bg-amber-950/20">
-              <span className="text-sm text-foreground/80">对调整满意？记住它，下次生成自动遵循</span>
-              <div className="flex shrink-0 gap-2">
-                <Button size="sm" variant="outline" onClick={() => setRememberCtx(null)} disabled={remembering}>
-                  跳过
+          {/* 润色结果横幅：AI 已输出修改后的完整报告，确认满意后覆盖原报告 / 记住偏好 / 继续改 */}
+          {refineTarget && refineReply && !streaming && (
+            <div className="mb-2 flex flex-col gap-2 rounded-md border border-amber-300/70 bg-amber-50/70 px-3 py-2 dark:border-amber-800/70 dark:bg-amber-950/20">
+              <span className="text-sm text-foreground/80">
+                已生成润色结果。满意就覆盖原{refineTarget.reportType}，或继续输入指令再改。
+              </span>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={exitRefine} disabled={applying || remembering}>
+                  完成
                 </Button>
-                <Button size="sm" onClick={rememberAdjustment} disabled={remembering} className="bg-amber-600 text-white hover:bg-amber-600/90">
+                <Button size="sm" variant="outline" onClick={rememberAdjustment} disabled={applying || remembering}>
                   {remembering ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
                   记住这个调整
                 </Button>
+                {refineTarget.historyId && (
+                  <Button
+                    size="sm"
+                    onClick={applyRefine}
+                    disabled={applying || remembering}
+                    className="bg-amber-600 text-white hover:bg-amber-600/90"
+                  >
+                    {applying ? <Loader2 className="size-3.5 animate-spin" /> : <FileCheck2 className="size-3.5" />}
+                    覆盖原{refineTarget.reportType}
+                  </Button>
+                )}
               </div>
             </div>
           )}
@@ -639,7 +706,7 @@ export function ChatPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKey}
-              placeholder={refineBanner ? '输入修改指令，如：把第二句的「上线」改成「灰度发布」…' : '问问你的工作记录，或说「帮我生成本周周报」…'}
+              placeholder={refineTarget ? '输入修改指令，如：把第二句的「上线」改成「灰度发布」…' : '问问你的工作记录，或说「帮我生成本周周报」…'}
               rows={2}
               className="max-h-32 min-h-[44px] flex-1 resize-none"
             />
