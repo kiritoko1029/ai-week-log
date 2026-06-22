@@ -19,7 +19,9 @@
         "minWidth": 960,
         "minHeight": 640,
         "url": "index.html",
-        "visible": true
+        "visible": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       },
       {
         "label": "quicknote",
@@ -43,10 +45,15 @@
     "active": true,
     "targets": "all",
     "icon": [
+      "../build/icon.icns",
       "../build/icon.ico",
       "../build/icon.png"
     ],
     "resources": [],
-    "externalBin": []
+    "externalBin": [],
+    "macOS": {
+      "signingIdentity": "WeekLog Dev",
+      "minimumSystemVersion": "10.15"
+    }
   }
 }

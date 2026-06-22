@@ -15,6 +15,7 @@
     "dist": "npm run build:renderer && electron-builder --win --x64 --mac --arm64 --publish never",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "tauri:dist:mac": "bash scripts/tauri-build-signed.sh",
     "dev:renderer:tauri": "cross-env WEEKLOG_TAURI=1 vite",
     "build:renderer:tauri": "cross-env WEEKLOG_TAURI=1 vite build"
   },

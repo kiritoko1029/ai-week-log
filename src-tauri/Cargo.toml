@@ -31,7 +31,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # git 日志解析 / 报告格式互转中的多处正则（忠实移植 JS 正则）
 regex = "1"
 # LLM HTTP 调用（OpenAI Responses / Anthropic Messages）。rustls 避免 OpenSSL 系统依赖。
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 # 报告生成的并发 AI 总结（worker 池 → buffer_unordered）
 futures = "0.3"
 # 重试退避的异步 sleep + chat 流式的 mpsc channel（运行在 Tauri 的 tokio 运行时上）
@@ -45,7 +45,11 @@ tiny_http = "0.12"
 # hook token / 待处理小记 id 的密码学随机源（对齐 crypto.randomBytes / Math.random）
 getrandom = "0.2"
 
-# 后续阶段按需追加：LLM 流式 reqwest + Channel；嵌入 ort + tokenizers。
+# 本地 embedding（对齐 Electron 的 transformers.js→onnxruntime-node）：
+# ort = ONNX Runtime 包装；download-binaries 在构建期拉取并静态链接 ORT，产物自包含（适配 CI 双平台）。
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries"] }
+# HuggingFace 分词器：直接加载 tokenizer.json（XLM-RoBERTa / e5），onig 用于其内部正则（C 依赖，CI 具备工具链）。
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
 
 # 系统钥匙串（API Key / WebDAV 密码 / hook token），等价 Electron safeStorage。
 # 按平台选后端：Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service。

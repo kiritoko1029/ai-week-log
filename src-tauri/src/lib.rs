@@ -1321,8 +1321,10 @@ pub fn run() {
 
             #[cfg(debug_assertions)]
             {
-                if let Some(win) = app.get_webview_window("main") {
-                    win.open_devtools();
+                if std::env::var("WEEKLOG_DEV").is_ok() {
+                    if let Some(win) = app.get_webview_window("main") {
+                        win.open_devtools();
+                    }
                 }
             }
             Ok(())

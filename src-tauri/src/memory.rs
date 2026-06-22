@@ -9,12 +9,17 @@
 
 use std::collections::VecDeque;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
+use futures::StreamExt;
+use ort::session::{builder::GraphOptimizationLevel, Session};
+use ort::value::Tensor;
 use regex::Regex;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+use tokenizers::Tokenizer;
 
 use crate::{llm, tasks, utils};
 
@@ -44,6 +49,95 @@ fn index_path(app: &AppHandle) -> PathBuf {
 }
 fn entry_path(app: &AppHandle, id: &str) -> PathBuf {
     entries_dir(app).join(format!("{id}.md"))
+}
+
+// ── 本地模型缓存目录 ──
+//
+// 模型体积大（multilingual-e5-small fp32 ~470MB），存于 base_dir/models，避免随更新丢失。
+// 同时复用 Electron 版（应用名 weeklog）已下载的模型，避免重复下载。
+
+fn model_cache_dir(app: &AppHandle) -> PathBuf {
+    base_dir(app).join("models")
+}
+
+/// Electron 版（应用名 `weeklog`）的 models 目录，按平台拼装。复用其已下载的模型。
+fn legacy_model_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if cfg!(target_os = "macos") {
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.push(
+                PathBuf::from(home)
+                    .join("Library/Application Support/weeklog/models"),
+            );
+        }
+    } else if cfg!(target_os = "windows") {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            dirs.push(PathBuf::from(appdata).join("weeklog").join("models"));
+        }
+    } else {
+        // Linux：优先 XDG_CONFIG_HOME，否则 ~/.config
+        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+            dirs.push(PathBuf::from(xdg).join("weeklog").join("models"));
+        } else if let Some(home) = std::env::var_os("HOME") {
+            dirs.push(PathBuf::from(home).join(".config/weeklog/models"));
+        }
+    }
+    dirs
+}
+
+/// 校验某个 `models/{model}` 目录是否含完整模型文件（config + tokenizer + onnx）。
+fn is_valid_model_dir(dir: &PathBuf) -> bool {
+    let files: Vec<String> = match fs::read_dir(dir) {
+        Ok(rd) => rd
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect(),
+        Err(_) => return false,
+    };
+    if !files.iter().any(|f| f == "config.json") || !files.iter().any(|f| f == "tokenizer.json") {
+        return false;
+    }
+    let onnx_dir = if files.iter().any(|f| f == "onnx") {
+        dir.join("onnx")
+    } else {
+        dir.clone()
+    };
+    fs::read_dir(&onnx_dir)
+        .map(|rd| {
+            rd.flatten().any(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                n == "model.onnx" || n == "model_quantized.onnx"
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// 定位一个可用的 `{model}` 目录：先 Tauri 缓存目录，再回退 Electron 旧目录。
+fn find_model_dir(app: &AppHandle, model: &str) -> Option<PathBuf> {
+    let primary = model_cache_dir(app).join(model);
+    if is_valid_model_dir(&primary) {
+        return Some(primary);
+    }
+    for base in legacy_model_dirs() {
+        let d = base.join(model);
+        if is_valid_model_dir(&d) {
+            return Some(d);
+        }
+    }
+    None
+}
+
+/// 返回模型目录下的 onnx 文件实际路径（onnx/ 子目录优先）。
+fn onnx_path_in(dir: &PathBuf) -> Option<PathBuf> {
+    for sub in [dir.join("onnx"), dir.clone()] {
+        for name in ["model.onnx", "model_quantized.onnx"] {
+            let p = sub.join(name);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    None
 }
 
 fn to_base36(mut n: u128) -> String {
@@ -121,22 +215,34 @@ fn tokenize(text: &str) -> Vec<String> {
     tokens
 }
 
-// ── Embedding（API 已实现；本地 ONNX 待 ort 集成）──
+// ── Embedding（API + 本地 ONNX）──
 
-/// 对单条文本生成 embedding 向量。local 源下返回 None（与 JS 模型缺失时一致）。
-async fn embed(cfg: &Value, api_key: &str, text: &str) -> Option<Vec<f64>> {
+/// 对单条文本生成 embedding 向量。
+/// - api：调用 OpenAI embeddings。
+/// - local：加载本地 onnx（缺则下载）→ 推理 → mean-pool → L2 归一化（对齐 JS transformers.js）。
+async fn embed(app: &AppHandle, cfg: &Value, api_key: &str, text: &str) -> Option<Vec<f64>> {
     if text.trim().is_empty() {
         return None;
     }
     let source = cfg["memory"]["embeddingSource"].as_str().unwrap_or("local");
     let model = cfg["memory"]["embeddingModel"]
         .as_str()
-        .unwrap_or("Xenova/multilingual-e5-small");
+        .unwrap_or("Xenova/multilingual-e5-small")
+        .to_string();
     if source == "api" {
-        return embed_via_api(cfg, api_key, model, text).await.unwrap_or(None);
+        return embed_via_api(cfg, api_key, &model, text).await.unwrap_or(None);
     }
-    // 本地 ONNX 嵌入需 ort + 模型文件，尚未集成 → None（检索降级为关键词预筛）
-    None
+    // 本地 ONNX
+    let model_source = cfg["memory"]["modelSource"].as_str().unwrap_or("auto").to_string();
+    let dir = ensure_model(app, &model, &model_source).await?;
+    // multilingual-e5 约定：query/passage 前缀（与 JS 一致，存储/查询都用 query:）
+    let input = format!("query: {}", text);
+    let model_key = model;
+    // ort 推理是同步 CPU 任务，放 spawn_blocking 避免阻塞 tokio 运行时
+    tauri::async_runtime::spawn_blocking(move || run_inference(&dir, &model_key, &input))
+        .await
+        .ok()
+        .flatten()
 }
 
 /// 调用 OpenAI embedding API（复用 openai 配置）。
@@ -177,6 +283,244 @@ async fn embed_via_api(
     Ok(data["data"][0]["embedding"]
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_f64()).collect()))
+}
+
+// ── 本地模型：下载源解析（对齐 memory.js resolveSource/applySource）──
+
+// 进程级缓存：auto 探测结果只算一次
+static RESOLVED_SOURCE: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+
+/// 轻量连通性探测：HEAD 请求，3s 超时；网络层失败即不可达。
+async fn probe_reachable(url: &str) -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match client.head(url).send().await {
+        // 2xx/3xx/4xx 都算"能连上"，只有网络层失败才回退
+        Ok(r) => r.status().as_u16() < 500,
+        Err(_) => false,
+    }
+}
+
+/// auto → 探测魔搭；modelscope/huggingface 原样返回。结果进程级缓存。
+async fn resolve_source(source: &str) -> String {
+    if source != "auto" {
+        return source.to_string();
+    }
+    if let Some(s) = RESOLVED_SOURCE.lock().ok().and_then(|g| g.clone()) {
+        return s;
+    }
+    let ok = probe_reachable("https://modelscope.cn").await;
+    let resolved = if ok { "modelscope" } else { "huggingface" }.to_string();
+    if let Ok(mut g) = RESOLVED_SOURCE.lock() {
+        *g = Some(resolved.clone());
+    }
+    resolved
+}
+
+/// 拼装某个文件的下载 URL（ModelScope 路径结构与 HF 不同）。
+fn file_url(source: &str, model: &str, file: &str) -> String {
+    if source == "modelscope" {
+        format!("https://modelscope.cn/api/v1/models/{}/resolve/main/{}", model, file)
+    } else {
+        format!("https://huggingface.co/{}/resolve/main/{}", model, file)
+    }
+}
+
+/// 流式下载单个文件到 dest，按 content-length 折算百分比上报到任务。
+async fn download_file(
+    app: &AppHandle,
+    task_id: &str,
+    url: &str,
+    dest: &PathBuf,
+    label: &str,
+) -> Result<(), String> {
+    if let Some(p) = dest.parent() {
+        fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    let resp = reqwest::Client::new()
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status().as_u16()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+    let mut file = fs::File::create(dest).map_err(|e| e.to_string())?;
+    let mut downloaded: u64 = 0;
+    let mut last_pct: i64 = -1;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
+        downloaded += bytes.len() as u64;
+        if total > 0 {
+            let pct = (downloaded * 100 / total) as i64;
+            if pct != last_pct {
+                last_pct = pct;
+                app.state::<tasks::Tasks>().update(
+                    task_id,
+                    None,
+                    Some(Some(tasks::Progress {
+                        done: pct as f64,
+                        total: 100.0,
+                        label: format!("{}（{}%）", label, pct),
+                    })),
+                    None,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 确保本地模型文件就绪：先复用已有目录，缺失则下载到 Tauri 缓存目录。返回模型目录。
+async fn ensure_model(app: &AppHandle, model: &str, source: &str) -> Option<PathBuf> {
+    if let Some(dir) = find_model_dir(app, model) {
+        return Some(dir);
+    }
+    let dest = model_cache_dir(app).join(model);
+    let resolved = resolve_source(source).await;
+    let src_label = if resolved == "modelscope" { "魔搭社区" } else { "HuggingFace" };
+    let task_id = app.state::<tasks::Tasks>().create(
+        "model_dl",
+        "下载 Embedding 模型",
+        &format!("正在从 {} 下载 {}", src_label, model),
+        Some(tasks::Progress {
+            done: 0.0,
+            total: 100.0,
+            label: "准备中".to_string(),
+        }),
+    );
+    // tokenizer.json + config.json 用于分词/校验；onnx/model.onnx 是权重（fp32，与现存向量同源）
+    let files = ["config.json", "tokenizer.json", "onnx/model.onnx"];
+    for f in files {
+        let url = file_url(&resolved, model, f);
+        if let Err(e) = download_file(app, &task_id, &url, &dest.join(f), f).await {
+            app.state::<tasks::Tasks>()
+                .error(&task_id, &format!("下载 {} 失败：{}", f, e));
+            return None;
+        }
+    }
+    app.state::<tasks::Tasks>()
+        .done(&task_id, json!({ "model": model }));
+    Some(dest)
+}
+
+// ── 本地模型：ONNX 推理（同步，进程级缓存 session+tokenizer）──
+
+#[allow(clippy::type_complexity)]
+static LOCAL_MODEL: LazyLock<Mutex<Option<(String, Session, Tokenizer)>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// 同步推理：加载（缓存）onnx+tokenizer → 编码 → 推理 → mean-pool(mask) → L2 归一化。
+/// 返回与 transformers.js `{pooling:'mean', normalize:true}` 一致的 384 维向量。
+fn run_inference(dir: &PathBuf, model_key: &str, input: &str) -> Option<Vec<f64>> {
+    let mut guard = LOCAL_MODEL.lock().ok()?;
+    let need_load = guard
+        .as_ref()
+        .map(|(m, _, _)| m != model_key)
+        .unwrap_or(true);
+    if need_load {
+        let onnx = onnx_path_in(dir)?;
+        let session = Session::builder()
+            .ok()?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .ok()?
+            .with_intra_threads(4)
+            .ok()?
+            .commit_from_file(&onnx)
+            .ok()?;
+        let mut tok = Tokenizer::from_file(dir.join("tokenizer.json")).ok()?;
+        let _ = tok.with_truncation(Some(tokenizers::TruncationParams {
+            max_length: 512,
+            ..Default::default()
+        }));
+        *guard = Some((model_key.to_string(), session, tok));
+    }
+    let (_, session, tok) = guard.as_mut()?;
+
+    let enc = tok.encode(input, true).ok()?;
+    let ids: Vec<i64> = enc.get_ids().iter().map(|&x| x as i64).collect();
+    let mask: Vec<i64> = enc.get_attention_mask().iter().map(|&x| x as i64).collect();
+    let seq = ids.len();
+    if seq == 0 {
+        return None;
+    }
+    let shape = vec![1_i64, seq as i64];
+    let needs_tt = session.inputs.iter().any(|i| i.name == "token_type_ids");
+    let ids_t = Tensor::from_array((shape.clone(), ids)).ok()?;
+    let mask_t = Tensor::from_array((shape.clone(), mask.clone())).ok()?;
+
+    let outputs = if needs_tt {
+        let tt_t = Tensor::from_array((shape.clone(), vec![0_i64; seq])).ok()?;
+        session
+            .run(ort::inputs![
+                "input_ids" => ids_t,
+                "attention_mask" => mask_t,
+                "token_type_ids" => tt_t,
+            ])
+            .ok()?
+    } else {
+        session
+            .run(ort::inputs![
+                "input_ids" => ids_t,
+                "attention_mask" => mask_t,
+            ])
+            .ok()?
+    };
+
+    // 取 last_hidden_state（否则第一个输出），形状 [1, seq, hidden]
+    let mut out_val = None;
+    for (name, val) in outputs.iter() {
+        if name == "last_hidden_state" {
+            out_val = Some(val);
+            break;
+        }
+        if out_val.is_none() {
+            out_val = Some(val);
+        }
+    }
+    let out_dyn = out_val?;
+    let (out_shape, data) = out_dyn.try_extract_tensor::<f32>().ok()?;
+    let hidden = *out_shape.last()? as usize;
+    if hidden == 0 || data.len() < seq * hidden {
+        return None;
+    }
+
+    // mean pooling（attention-mask 加权）
+    let mut pooled = vec![0f32; hidden];
+    let mut denom = 0f32;
+    for t in 0..seq {
+        let m = mask[t] as f32;
+        if m == 0.0 {
+            continue;
+        }
+        denom += m;
+        let base = t * hidden;
+        for h in 0..hidden {
+            pooled[h] += data[base + h] * m;
+        }
+    }
+    if denom == 0.0 {
+        return None;
+    }
+    for v in pooled.iter_mut() {
+        *v /= denom;
+    }
+    // L2 normalize
+    let norm: f32 = pooled.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for v in pooled.iter_mut() {
+            *v /= norm;
+        }
+    }
+    Some(pooled.into_iter().map(|x| x as f64).collect())
 }
 
 fn cosine(a: &[f64], b: &[f64]) -> f64 {
@@ -224,36 +568,14 @@ fn dir_size(dir: &PathBuf) -> u64 {
 }
 
 /// 检测本地模型文件是否就绪（onnx + config.json + tokenizer.json）。返回 (ready, sizeMB)。
+/// 探测 Tauri 缓存目录与 Electron 旧目录，任一命中即就绪。
 fn probe_local_model(app: &AppHandle, model: &str) -> (bool, f64) {
-    let model_dir = base_dir(app).join("models").join(model);
-    let files: Vec<String> = match fs::read_dir(&model_dir) {
-        Ok(rd) => rd
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect(),
-        Err(_) => return (false, 0.0),
-    };
-    let onnx_dir = if files.iter().any(|f| f == "onnx") {
-        model_dir.join("onnx")
-    } else {
-        model_dir.clone()
-    };
-    let onnx_ok = fs::read_dir(&onnx_dir)
-        .map(|rd| {
-            let names: Vec<String> = rd
-                .flatten()
-                .map(|e| e.file_name().to_string_lossy().to_string())
-                .collect();
-            names.iter().any(|f| f == "model.onnx" || f == "model_quantized.onnx")
-        })
-        .unwrap_or(false);
-    let has_config = files.iter().any(|f| f == "config.json");
-    let has_tokenizer = files.iter().any(|f| f == "tokenizer.json");
-    if onnx_ok && has_config && has_tokenizer {
-        let bytes = dir_size(&model_dir);
-        (true, ((bytes as f64 / 1024.0 / 1024.0) * 10.0).round() / 10.0)
-    } else {
-        (false, 0.0)
+    match find_model_dir(app, model) {
+        Some(dir) => {
+            let bytes = dir_size(&dir);
+            (true, ((bytes as f64 / 1024.0 / 1024.0) * 10.0).round() / 10.0)
+        }
+        None => (false, 0.0),
     }
 }
 
@@ -374,7 +696,7 @@ async fn process_embedding(app: &AppHandle, cfg: &Value, api_key: &str, id: &str
         }
     }
     let text = parts.join(" ");
-    if let Some(vec) = embed(cfg, api_key, &text).await {
+    if let Some(vec) = embed(app, cfg, api_key, &text).await {
         if !vec.is_empty() {
             let mut list = read_index(app);
             if let Some(it) = list.iter_mut().find(|x| x["id"].as_str() == Some(id)) {
@@ -645,8 +967,8 @@ pub async fn search(app: &AppHandle, query: &str, top_k: usize, cfg: &Value) -> 
         candidates = std::mem::take(&mut scored);
     }
 
-    // 2) 语义重排（有向量才重排；本地 ONNX 未集成时 q_vec=None → 关键词得分）
-    let q_vec = embed(cfg, "", query).await;
+    // 2) 语义重排（有向量才重排；本地模型缺失/下载失败时 q_vec=None → 关键词得分）
+    let q_vec = embed(app, cfg, "", query).await;
 
     candidates.sort_by(|a, b| {
         let av = embedding_vec(a.1);
