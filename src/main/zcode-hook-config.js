@@ -33,25 +33,30 @@ const {
 const WEEKLOG_HOOK_ID = 'weeklog-zcode-pending-note'
 const WEEKLOG_STATUS_MESSAGE = `Saving ZCode pending note (${WEEKLOG_HOOK_ID})`
 
-const MARKETPLACE_NAME = 'weeklog-hooks'
 const PLUGIN_NAME = 'weeklog-pending-note'
 const PLUGIN_VERSION = '1.0.0'
 const PLUGIN_DESCRIPTION = 'ZCode 完成任务后把摘要写入 WeekLog 待处理小记池（由 WeekLog 自动安装）。'
+
+/**
+ * ZCode 有自己的引擎（zcode.cjs）。插件发现机制（来自引擎源码 Kro 函数）：
+ * 只扫描 <pluginStorageRoot>/cache/zcode-plugins-official/<plugin>/<version>/，
+ * 其中 pluginStorageRoot = ~/.zcode/cli/plugins（wue(join(cliStorageRoot,"plugins"))）。
+ * 清单用 .zcode-plugin/plugin.json；启用靠 ~/.zcode/cli/config.json -> plugins.enabledPlugins["<plugin>@zcode-plugins-official"]。
+ * marketplace 文件夹名被引擎硬编码为 zcode-plugins-official（常量 Z_），不支持自定义 marketplace。
+ */
+const OFFICIAL_MARKETPLACE = 'zcode-plugins-official'
 
 function defaultZcodeHome(env = process.env) {
   return env.ZCODE_HOME || path.join(os.homedir(), '.zcode')
 }
 
+function pluginsRoot(env = process.env) {
+  return path.join(defaultZcodeHome(env), 'cli', 'plugins')
+}
+
 function pluginCacheRoot(env = process.env) {
-  return path.join(defaultZcodeHome(env), 'cli', 'plugins', 'cache', MARKETPLACE_NAME, PLUGIN_NAME, PLUGIN_VERSION)
-}
-
-function marketplaceRoot(env = process.env) {
-  return path.join(defaultZcodeHome(env), 'cli', 'plugins', 'marketplaces', MARKETPLACE_NAME)
-}
-
-function marketplaceFile(env = process.env) {
-  return path.join(marketplaceRoot(env), 'marketplace.json')
+  // 引擎只扫描 cache/zcode-plugins-official/<plugin>/<version>/
+  return path.join(pluginsRoot(env), 'cache', OFFICIAL_MARKETPLACE, PLUGIN_NAME, PLUGIN_VERSION)
 }
 
 function zcodeConfigFile(env = process.env) {
@@ -121,6 +126,9 @@ function deriveZcodeSummary(event, opts = {}) {
     e.assistantResponse,
     e.output_text,
     e.outputText,
+    // GLM/ZCode 引擎 Stop 事件用 responsePreview 携带助手回复（camelCase，无 transcript 路径可回退）
+    e.responsePreview,
+    e.response_preview,
     e.summary,
     e.result && e.result.summary,
     e.result && e.result.text,
@@ -213,9 +221,10 @@ function buildPluginJson() {
 }
 
 function buildSeedJson() {
+  // .zcode-plugin-seed.json：与官方插件格式一致（hash 可留占位，发现时不强制校验）
   return {
     hash: sha256(PLUGIN_NAME + '@' + PLUGIN_VERSION),
-    marketplace: MARKETPLACE_NAME,
+    marketplace: OFFICIAL_MARKETPLACE,
     plugin: PLUGIN_NAME,
     pluginVersion: PLUGIN_VERSION,
     source: 'filesystem',
@@ -260,11 +269,13 @@ function buildZcodeHookSnippet({ endpoint, token }) {
   return [
     `# WeekLog ZCode Hook 安装说明`,
     ``,
-    `1) 在 ZCode 用户目录创建插件包：`,
-    `   ~/.zcode/cli/plugins/cache/${MARKETPLACE_NAME}/${PLUGIN_NAME}/${PLUGIN_VERSION}/`,
+    `ZCode 引擎只扫描 cache/zcode-plugins-official/<plugin>/<version>/ 下的插件。`,
+    `一键安装会把插件包写入 ~/.zcode/cli/plugins 并在 config.json 启用。`,
+    ``,
+    `1) 插件包目录：`,
+    `   ~/.zcode/cli/plugins/cache/${OFFICIAL_MARKETPLACE}/${PLUGIN_NAME}/${PLUGIN_VERSION}/`,
     `   ├─ .zcode-plugin/plugin.json`,
-    `   ├─ hooks/hooks.json`,
-    `   └─ hooks/post-stop.js`,
+    `   └─ hooks/hooks.json + hooks/post-stop.js`,
     ``,
     `2) plugin.json：`,
     pluginJson,
@@ -276,8 +287,8 @@ function buildZcodeHookSnippet({ endpoint, token }) {
     `   endpoint = ${endpoint}`,
     `   token    = ${token}`,
     ``,
-    `5) 注册到 marketplace.json 并在 config.json 启用：`,
-    `   enabledPlugins: { "${PLUGIN_NAME}@${MARKETPLACE_NAME}": true }`,
+    `5) 在 ~/.zcode/cli/config.json 的 plugins.enabledPlugins 启用：`,
+    `   "${PLUGIN_NAME}@${OFFICIAL_MARKETPLACE}": true`,
   ].join('\n')
 }
 
@@ -319,57 +330,38 @@ function writePluginPackage(root, { endpoint, token }) {
   )
 }
 
-function upsertMarketplace(env, now) {
-  const file = marketplaceFile(env)
+function writeMarketplaceManifest(env) {
+  // 引擎只扫描 cache/zcode-plugins-official/，但写入官方 marketplace.json 记录（与官方插件一致）
+  const dir = path.join(pluginsRoot(env), 'marketplaces', OFFICIAL_MARKETPLACE)
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, 'marketplace.json')
   const read = readJson(file)
-  if (read.error) return { error: `ZCode marketplace.json 不是有效 JSON：${read.error}` }
-  const data = read.value && typeof read.value === 'object' && !Array.isArray(read.value)
-    ? read.value
-    : { name: MARKETPLACE_NAME, plugins: [], version: 1 }
-  if (!Array.isArray(data.plugins)) data.plugins = []
-  // 去重：移除同名旧条目
-  const before = data.plugins.length
+  const data = read.value && Array.isArray(read.value.plugins) ? read.value : { name: OFFICIAL_MARKETPLACE, plugins: [], version: 1 }
+  // 追加 WeekLog 插件条目（去重）
   data.plugins = data.plugins.filter((p) => !p || p.name !== PLUGIN_NAME)
-  const removedCount = before - data.plugins.length
   data.plugins.push({
     cachePath: pluginCacheRoot(env),
     name: PLUGIN_NAME,
     source: 'filesystem',
     version: PLUGIN_VERSION,
   })
-  const backupPath = read.exists ? backupFile(file, now) : ''
   writeJson(file, data)
-  return { ok: true, backupPath, removedCount }
-}
-
-function removeFromMarketplace(env, now) {
-  const file = marketplaceFile(env)
-  const read = readJson(file)
-  if (read.error) return { error: `ZCode marketplace.json 不是有效 JSON：${read.error}` }
-  if (!read.exists || !read.value || !Array.isArray(read.value.plugins)) {
-    return { ok: true, removed: 0 }
-  }
-  const before = read.value.plugins.length
-  read.value.plugins = read.value.plugins.filter((p) => !p || p.name !== PLUGIN_NAME)
-  const removed = before - read.value.plugins.length
-  if (!removed) return { ok: true, removed: 0 }
-  const backupPath = backupFile(file, now)
-  writeJson(file, read.value)
-  return { ok: true, removed, backupPath }
 }
 
 function upsertEnabledFlag(env, now) {
+  // ~/.zcode/cli/config.json -> plugins.enabledPlugins["weeklog-pending-note@zcode-plugins-official"]
   const file = zcodeConfigFile(env)
   const read = readJson(file)
   if (read.error) return { error: `ZCode config.json 不是有效 JSON：${read.error}` }
-  const data = read.value && typeof read.value === 'object' && !Array.isArray(read.value)
+  // 保留用户已有配置（mcp.servers 等），仅在缺失时补 plugins/enabledPlugins 子结构
+  const data = read.exists && read.value && typeof read.value === 'object' && !Array.isArray(read.value)
     ? read.value
     : {}
-  if (!data.plugins || typeof data.plugins !== 'object') data.plugins = {}
-  if (!data.plugins.enabledPlugins || typeof data.plugins.enabledPlugins !== 'object') {
+  if (!data.plugins || typeof data.plugins !== 'object' || Array.isArray(data.plugins)) data.plugins = {}
+  if (!data.plugins.enabledPlugins || typeof data.plugins.enabledPlugins !== 'object' || Array.isArray(data.plugins.enabledPlugins)) {
     data.plugins.enabledPlugins = {}
   }
-  const key = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`
+  const key = `${PLUGIN_NAME}@${OFFICIAL_MARKETPLACE}`
   const wasEnabled = !!data.plugins.enabledPlugins[key]
   data.plugins.enabledPlugins[key] = true
   const backupPath = read.exists ? backupFile(file, now) : ''
@@ -384,9 +376,8 @@ function removeFromEnabledFlag(env, now) {
   if (!read.exists || !read.value || !read.value.plugins || !read.value.plugins.enabledPlugins) {
     return { ok: true, removed: 0 }
   }
-  const key = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`
-  const had = key in read.value.plugins.enabledPlugins
-  if (!had) return { ok: true, removed: 0 }
+  const key = `${PLUGIN_NAME}@${OFFICIAL_MARKETPLACE}`
+  if (!(key in read.value.plugins.enabledPlugins)) return { ok: true, removed: 0 }
   delete read.value.plugins.enabledPlugins[key]
   const backupPath = backupFile(file, now)
   writeJson(file, read.value)
@@ -406,8 +397,8 @@ function installZcodeHook({ env = process.env, endpoint, token, now = () => new 
     return { ok: false, installed: false, error: `写入插件包失败：${e.message || e}` }
   }
 
-  const market = upsertMarketplace(env, now)
-  if (market.error) return { ok: false, installed: false, error: market.error }
+  // 写入官方 marketplace.json 记录（保持与官方插件一致）
+  try { writeMarketplaceManifest(env) } catch {}
   const flag = upsertEnabledFlag(env, now)
   if (flag.error) return { ok: false, installed: false, error: flag.error }
 
@@ -415,9 +406,8 @@ function installZcodeHook({ env = process.env, endpoint, token, now = () => new 
     ok: true,
     installed: true,
     pluginPath: pluginRoot,
-    marketplacePath: marketplaceFile(env),
     configPath: zcodeConfigFile(env),
-    backups: [pluginBackup, market.backupPath, flag.backupPath].filter(Boolean),
+    backups: [pluginBackup, flag.backupPath].filter(Boolean),
   }
 }
 
@@ -429,17 +419,27 @@ function uninstallZcodeHook({ env = process.env, now = () => new Date() } = {}) 
     emptyDir(pluginRoot)
     try { fs.rmSync(pluginRoot, { recursive: true, force: true }); removedFiles++ } catch {}
   }
-  const market = removeFromMarketplace(env, now)
-  if (market.error) return { ok: false, removed: removedFiles, error: market.error }
-  if (market.backupPath) backups.push(market.backupPath)
+  // 从官方 marketplace.json 移除记录（去重，保留其他官方插件）
+  try {
+    const marketFile = path.join(pluginsRoot(env), 'marketplaces', OFFICIAL_MARKETPLACE, 'marketplace.json')
+    const read = readJson(marketFile)
+    if (!read.error && read.value && Array.isArray(read.value.plugins)) {
+      const before = read.value.plugins.length
+      read.value.plugins = read.value.plugins.filter((p) => !p || p.name !== PLUGIN_NAME)
+      if (read.value.plugins.length !== before) {
+        const backupPath = backupFile(marketFile, now)
+        writeJson(marketFile, read.value)
+        if (backupPath) backups.push(backupPath)
+      }
+    }
+  } catch {}
   const flag = removeFromEnabledFlag(env, now)
   if (flag.error) return { ok: false, removed: removedFiles, error: flag.error }
   if (flag.backupPath) backups.push(flag.backupPath)
   return {
     ok: true,
-    removed: removedFiles + (market.removed || 0) + (flag.removed || 0),
+    removed: removedFiles + (flag.removed || 0),
     pluginPath: pluginRoot,
-    marketplacePath: marketplaceFile(env),
     configPath: zcodeConfigFile(env),
     backups,
   }
@@ -464,24 +464,18 @@ function getZcodeHookInstallStatus({ env = process.env } = {}) {
       installed = hookCount > 0
     }
   }
-  // 检查 marketplace 注册与启用状态
-  let registered = false
-  const marketRead = readJson(marketplaceFile(env))
-  if (!marketRead.error && marketRead.value && Array.isArray(marketRead.value.plugins)) {
-    registered = marketRead.value.plugins.some((p) => p && p.name === PLUGIN_NAME)
-  }
+  // 检查 enabledPlugins 启用状态（引擎加载开关）
   let enabled = false
   const cfgRead = readJson(zcodeConfigFile(env))
   if (!cfgRead.error && cfgRead.value && cfgRead.value.plugins && cfgRead.value.plugins.enabledPlugins) {
-    enabled = !!cfgRead.value.plugins.enabledPlugins[`${PLUGIN_NAME}@${MARKETPLACE_NAME}`]
+    enabled = !!cfgRead.value.plugins.enabledPlugins[`${PLUGIN_NAME}@${OFFICIAL_MARKETPLACE}`]
   }
   return {
     pluginPath: pluginRoot,
-    marketplacePath: marketplaceFile(env),
     configPath: zcodeConfigFile(env),
     exists: fs.existsSync(pluginRoot),
     installed,
-    registered,
+    registered: fs.existsSync(pluginRoot),
     enabled,
     hookCount,
     error: hookError,
@@ -491,12 +485,12 @@ function getZcodeHookInstallStatus({ env = process.env } = {}) {
 module.exports = {
   WEEKLOG_HOOK_ID,
   WEEKLOG_STATUS_MESSAGE,
-  MARKETPLACE_NAME,
+  OFFICIAL_MARKETPLACE,
   PLUGIN_NAME,
   PLUGIN_VERSION,
   defaultZcodeHome,
+  pluginsRoot,
   pluginCacheRoot,
-  marketplaceFile,
   zcodeConfigFile,
   deriveZcodeSummary,
   buildPostStopScript,

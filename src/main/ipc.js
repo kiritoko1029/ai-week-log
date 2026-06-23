@@ -478,7 +478,6 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer, zcodeHookSe
       hookEnabled: installStatus.enabled,
       hookCount: installStatus.hookCount,
       pluginPath: installStatus.pluginPath,
-      marketplacePath: installStatus.marketplacePath,
       configPath: installStatus.configPath,
       hookError: installStatus.error,
       ...status,

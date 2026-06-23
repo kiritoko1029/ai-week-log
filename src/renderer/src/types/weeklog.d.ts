@@ -182,7 +182,6 @@ export interface ZcodeHookStatus {
   hookEnabled: boolean
   hookCount: number
   pluginPath: string
-  marketplacePath: string
   configPath: string
   hookError: string
 }
@@ -195,7 +194,6 @@ export interface ZcodeHookCopyConfigResult {
 
 export interface ZcodeHookInstallStatus {
   pluginPath: string
-  marketplacePath: string
   configPath: string
   exists: boolean
   installed: boolean
@@ -210,7 +208,6 @@ export interface ZcodeHookInstallResult {
   installed?: boolean
   removed?: number
   pluginPath?: string
-  marketplacePath?: string
   configPath?: string
   backups?: string[]
   endpoint?: string

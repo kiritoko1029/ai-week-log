@@ -810,7 +810,7 @@ export function SettingsPage() {
             <div className="space-y-1.5">
               <Label>插件路径</Label>
               <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-                {zcodeHookStatus?.pluginPath || '~/.zcode/cli/plugins/cache/weeklog-hooks/weeklog-pending-note'}
+                {zcodeHookStatus?.pluginPath || '~/.zcode/cli/plugins/cache/zcode-plugins-official/weeklog-pending-note/1.0.0'}
               </p>
             </div>
             {zcodeHookStatus?.error && (
