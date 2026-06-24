@@ -150,3 +150,5 @@ jobs:
           files: ${{ matrix.artifact_glob }}
           fail_on_unmatched_files: false
           body_path: RELEASE_NOTES.md
+          # tag 含预发布标记（-beta / -rc / -alpha 等）时自动标记为 Pre-release
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') || contains(github.ref_name, '-alpha') }}
