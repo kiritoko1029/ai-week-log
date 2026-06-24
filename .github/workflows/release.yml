@@ -78,20 +78,46 @@ jobs:
             fi
           } > RELEASE_NOTES.md
 
+      - name: Import macOS signing certificate
+        # 仅 macOS：把自签名「WeekLog Dev」.p12 导入 runner 的「默认登录钥匙串」。
+        #
+        # 为什么手动导入而非依赖 tauri 的 APPLE_CERTIFICATE 自动导入？
+        # tauri-macos-sign 的 with_certificate() 路径会创建临时钥匙串，再用 identity::list()
+        # 解析签名身份——而该函数**硬编码只接受 Apple Developer 证书前缀**
+        #（Developer ID Application: / Apple Development: 等）。我们的自签名「WeekLog Dev」
+        # 不匹配任何前缀 → ResolveSigningIdentity 失败。
+        # 改走另一条路：导入到默认钥匙串 + 只设 APPLE_SIGNING_IDENTITY，tauri 会用
+        # with_signing_identity()（按 CN 直接签名，不过滤前缀），与本机 tauri-build-signed.sh 一致。
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "未配置 APPLE_CERTIFICATE secret，跳过签名（ad-hoc）。"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_USERPASS_KEYCHAIN"
+          # GitHub macOS runner 的默认登录钥匙串路径
+          : "${KEYCHAIN:=$HOME/Library/Keychains/login.keychain-db}"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
+          # 导入并授权 codesign 免密使用该身份（-A 等价 set-key-partition-list 的宽松授权）
+          security import /tmp/cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -A || true
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN" 1>/dev/null 2>&1 || true
+          rm -f /tmp/cert.p12
+          echo "✓ 已导入签名身份："
+          security find-identity -p codesigning "$KEYCHAIN" | grep "WeekLog Dev" || true
+
       - name: Build & package app (Tauri 2)
         # tauri build 自动执行 beforeBuildCommand（pnpm build:renderer:tauri 打包渲染层），
         # 再编译 Rust 后端并打包。产物落在 src-tauri/target/release/bundle/。
         env:
-          # macOS 自签名「WeekLog Dev」：从 GitHub Secrets 注入一份固定的 .p12，使每次 CI 产出
-          # 签名身份稳定（用户点一次「始终允许」即长期生效，钥匙串不再反复弹密码）。
-          # 见 docs/signing-macos.md「CI」一节，首次需在本机生成证书并导出：
-          #   APPLE_CERTIFICATE          = base64 < WeekLog-Dev.p12
-          #   APPLE_CERTIFICATE_PASSWORD = 导出 p12 时设置的密码
-          # tauri-cli 读取这两个变量后自动导入临时钥匙串，并用 APPLE_SIGNING_IDENTITY 签名（不公证）。
-          # tauri.conf.json > bundle.macOS.signingIdentity 已硬编码为 "WeekLog Dev"，身份须与之匹配。
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ matrix.os == 'macos-14' && 'WeekLog Dev' || '' }}
+          # macOS：只设 APPLE_SIGNING_IDENTITY（不设 APPLE_CERTIFICATE），强制 tauri 走
+          # with_signing_identity() 路径——用上一步导入到默认钥匙串的身份按 CN 签名。
+          # 与 tauri.conf.json > bundle.macOS.signingIdentity 的 "WeekLog Dev" 必须一致。
+          # 证书未导入时（无 secret）此项仍为 "WeekLog Dev"，但 tauri 找不到身份会自动回退 ad-hoc。
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && 'WeekLog Dev' || '' }}
         shell: bash
         run: pnpm exec tauri build --bundles ${{ matrix.bundles }}
 

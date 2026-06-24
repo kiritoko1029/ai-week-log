@@ -5585,7 +5585,7 @@ dependencies = [
 
 [[package]]
 name = "weeklog"
-version = "1.4.0-beta"
+version = "1.4.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",

@@ -81,11 +81,18 @@ spctl -a -vvv -t install "$APP"
 `.github/workflows/release.yml` 的 macOS job 默认用**自签名 `WeekLog Dev`** 签名（不公证），
 与本机 `pnpm tauri:dist:mac` 行为一致——保证 CI 产物与本地签名身份相同，用户点一次「始终允许」即长期生效。
 
-注入方式（`tauri-cli` 直接读取这两个环境变量，自动导入临时钥匙串并签名）：
+### 实现方式（为什么不用 tauri 的 APPLE_CERTIFICATE 自动导入）
 
-- `APPLE_CERTIFICATE`：自签名 `.p12` 的 **base64**（见下文「一次性导出」）
+tauri-macos-sign 有两条钥匙串路径（`sign.rs::keychain()`）：
+
+- **设了 `APPLE_CERTIFICATE` + `APPLE_CERTIFICATE_PASSWORD`** → `with_certificate()`：创建临时钥匙串 → 导入 → 用 `identity::list()` 解析身份。但该函数**硬编码只接受 Apple Developer 证书前缀**（`Developer ID Application:` / `Apple Development:` 等），自签名 `WeekLog Dev` 不匹配 → `ResolveSigningIdentity` 失败。
+- **只设 `APPLE_SIGNING_IDENTITY`** → `with_signing_identity()`：用默认钥匙串里已有的身份，按 CN 直接签名，**不过滤前缀**。本机 `tauri-build-signed.sh` 走的就是这条。
+
+所以 CI workflow **手动导入 `.p12` 到 runner 默认登录钥匙串**（`security import` + `set-key-partition-list` 授权 codesign），**只设 `APPLE_SIGNING_IDENTITY=WeekLog Dev`**，让 tauri 走第二条路径。两个 Secret 仍是：
+
+- `APPLE_CERTIFICATE`：自签名 `.p12` 的 **base64**（workflow 里 base64 --decode 后 `security import`）
 - `APPLE_CERTIFICATE_PASSWORD`：导出 `.p12` 时设置的密码
-- `APPLE_SIGNING_IDENTITY`：固定为 `WeekLog Dev`（workflow 内按 `matrix.os` 注入，
+- `APPLE_SIGNING_IDENTITY`：固定为 `WeekLog Dev`（workflow 内按 `runner.os` 注入，
   且须与 `tauri.conf.json > bundle.macOS.signingIdentity` 一致）
 
 ### 一次性导出自签名证书到 GitHub Secrets
@@ -104,16 +111,20 @@ base64 -i WeekLog-Dev.p12 | pbcopy
 然后在仓库 **Settings → Secrets and variables → Actions** 添加：
 `APPLE_CERTIFICATE`（粘贴 base64）、`APPLE_CERTIFICATE_PASSWORD`（导出密码）。
 
-> 未配置这两个 Secret 时，CI 的 macOS job 会回退到 ad-hoc 签名（无固定身份，
-> 钥匙串仍会每次弹密码）——不会失败，只是失去稳定签名的好处。
+> 未配置这两个 Secret 时，CI 的 macOS job 会跳过导入步骤，`APPLE_SIGNING_IDENTITY`
+> 虽仍为 `WeekLog Dev` 但钥匙串里找不到该身份，tauri 自动回退 ad-hoc 签名——不会失败，
+> 只是失去稳定签名的好处。
 
 ### 升级 CI 为对外分发（Developer ID + 公证）
 
-把 `APPLE_SIGNING_IDENTITY` 改为 `Developer ID Application: ...`，并补上公证三件套即可
-（`tauri-cli` 同样自动识别）：
+换用付费 Apple Developer 证书后，**改回 tauri 的自动导入路径更省事**（Developer ID 证书匹配前缀过滤，`with_certificate()` 能正常解析）。把 workflow 里手动导入那步删掉，改设：
 
+- `APPLE_CERTIFICATE` = Developer ID `.p12` 的 base64
+- `APPLE_CERTIFICATE_PASSWORD` = 导出密码
 - `APPLE_SIGNING_IDENTITY` = `Developer ID Application: 你的名字 (TEAMID)`
-- `APPLE_ID` / `APPLE_PASSWORD`（App 专用密码）/ `APPLE_TEAM_ID`
+- `APPLE_ID` / `APPLE_PASSWORD`（App 专用密码）/ `APPLE_TEAM_ID`（公证用）
+
+tauri-cli 检测到这三件套后会自动签名 + 公证 + staple。
 
 或改用 App Store Connect API：`APPLE_API_ISSUER` + `APPLE_API_KEY` + `APPLE_API_KEY_PATH`。
 workflow 无需改结构，仅靠环境变量切换。

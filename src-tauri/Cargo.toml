@@ -1,6 +1,6 @@
 [package]
 name = "weeklog"
-version = "1.4.0-beta"
+version = "1.4.0"
 description = "WeekLog — 本地 Git 周报/日报生成桌面客户端"
 authors = ["WeekLog"]
 license = "MIT"
