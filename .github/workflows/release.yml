@@ -79,15 +79,17 @@ jobs:
           } > RELEASE_NOTES.md
 
       - name: Import macOS signing certificate
-        # 仅 macOS：把自签名「WeekLog Dev」.p12 导入 runner 的「默认登录钥匙串」。
+        # 仅 macOS：创建「专用构建钥匙串」导入自签名「WeekLog Dev」.p12。
         #
-        # 为什么手动导入而非依赖 tauri 的 APPLE_CERTIFICATE 自动导入？
-        # tauri-macos-sign 的 with_certificate() 路径会创建临时钥匙串，再用 identity::list()
-        # 解析签名身份——而该函数**硬编码只接受 Apple Developer 证书前缀**
-        #（Developer ID Application: / Apple Development: 等）。我们的自签名「WeekLog Dev」
-        # 不匹配任何前缀 → ResolveSigningIdentity 失败。
-        # 改走另一条路：导入到默认钥匙串 + 只设 APPLE_SIGNING_IDENTITY，tauri 会用
-        # with_signing_identity()（按 CN 直接签名，不过滤前缀），与本机 tauri-build-signed.sh 一致。
+        # 背景：tauri-macos-sign 的 with_certificate()（APPLE_CERTIFICATE 路径）用
+        # identity::list() 解析身份，该函数**硬编码只认 Apple Developer 证书前缀**，
+        # 自签名 WeekLog Dev 不匹配 → ResolveSigningIdentity 失败。所以这里手动导入，
+        # 只设 APPLE_SIGNING_IDENTITY，让 tauri 走 with_signing_identity()（按 CN 签名、不过滤）。
+        #
+        # 为什么创建「专用钥匙串」而非用 runner 默认 login.keychain-db？
+        # codesign 读私钥时若钥匙串锁定会弹密码框，CI 无 TTY → **永久挂起**（tauri-action #941）。
+        # 专用钥匙串可精确控制：设密码、设为默认、autolock 关到 6h、显式解锁、授权 codesign 免密、
+        # 置于搜索路径最前。这套序列是 macOS CI 签名的标准做法（见 tauri-action #941 / SO #70991268）。
         if: runner.os == 'macOS'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -98,16 +100,29 @@ jobs:
             echo "未配置 APPLE_CERTIFICATE secret，跳过签名（ad-hoc）。"
             exit 0
           fi
-          KEYCHAIN="$RUNNER_USERPASS_KEYCHAIN"
-          # GitHub macOS runner 的默认登录钥匙串路径
-          : "${KEYCHAIN:=$HOME/Library/Keychains/login.keychain-db}"
+          # 随机钥匙串密码（仅本 job 生命周期内有效）
+          KC_PASS="$(openssl rand -hex 16)"
+          KC_PATH="$HOME/Library/Keychains/build.keychain-db"
+
+          # 1. 创建专用钥匙串（已存在则先删，保证幂等）
+          security delete-keychain "$KC_PATH" 2>/dev/null || true
+          security create-keychain -p "$KC_PASS" "$KC_PATH"
+          # 2. autolock 关闭到 6 小时，确保构建期间不锁；并立即解锁
+          security set-keychain-settings -lut 21600 "$KC_PATH"
+          security unlock-keychain -p "$KC_PASS" "$KC_PATH"
+          # 3. 导入 .p12，-T 授权 codesign 免密、-A 允许本机工具
           echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/cert.p12
-          # 导入并授权 codesign 免密使用该身份（-A 等价 set-key-partition-list 的宽松授权）
-          security import /tmp/cert.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -A || true
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN" 1>/dev/null 2>&1 || true
+          security import /tmp/cert.p12 -k "$KC_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -A
           rm -f /tmp/cert.p12
+          # 4. partition-list：把私钥授权给 codesign 等（CI 无交互的关键）
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PASS" "$KC_PATH"
+          # 5. 置于搜索路径最前 + 设为默认，使 tauri/codesign 能解析到该身份
+          security list-keychains -d user -s "$KC_PATH" login.keychain-db
+          security default-keychain -s "$KC_PATH"
+
           echo "✓ 已导入签名身份："
-          security find-identity -p codesigning "$KEYCHAIN" | grep "WeekLog Dev" || true
+          security find-identity -p codesigning "$KC_PATH" | grep "WeekLog Dev"
 
       - name: Build & package app (Tauri 2)
         # tauri build 自动执行 beforeBuildCommand（pnpm build:renderer:tauri 打包渲染层），
