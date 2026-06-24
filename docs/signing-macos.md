@@ -76,12 +76,47 @@ spctl -a -vvv -t install "$APP"
 
 签名稳定后，首次运行用到密钥时点 **「始终允许」**，后续版本（同证书 + 同 bundle id）不再弹。
 
-## CI（可选，后续）
+## CI
 
-GitHub Actions 里通过 Secrets 注入证书与公证凭据：
-`APPLE_CERTIFICATE`（base64 的 .p12）、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_SIGNING_IDENTITY`、
-`APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`。当前 `.github/workflows/release.yml` 仍是 Electron 流程，
-迁移到 Tauri 打包时再补一个 job。
+`.github/workflows/release.yml` 的 macOS job 默认用**自签名 `WeekLog Dev`** 签名（不公证），
+与本机 `pnpm tauri:dist:mac` 行为一致——保证 CI 产物与本地签名身份相同，用户点一次「始终允许」即长期生效。
+
+注入方式（`tauri-cli` 直接读取这两个环境变量，自动导入临时钥匙串并签名）：
+
+- `APPLE_CERTIFICATE`：自签名 `.p12` 的 **base64**（见下文「一次性导出」）
+- `APPLE_CERTIFICATE_PASSWORD`：导出 `.p12` 时设置的密码
+- `APPLE_SIGNING_IDENTITY`：固定为 `WeekLog Dev`（workflow 内按 `matrix.os` 注入，
+  且须与 `tauri.conf.json > bundle.macOS.signingIdentity` 一致）
+
+### 一次性导出自签名证书到 GitHub Secrets
+
+在**本机**执行一次（已用 `scripts/create-dev-signing-cert.sh` 创建过 `WeekLog Dev` 身份为前提）：
+
+```bash
+# 从登录钥匙串导出 .p12（导出时设置一个密码）
+security export -k ~/Library/Keychains/login.keychain-db \
+  -t identities -f pkcs12 -o WeekLog-Dev.p12
+
+# base64 编码后复制到剪贴板 → 粘进 GitHub Secrets
+base64 -i WeekLog-Dev.p12 | pbcopy
+```
+
+然后在仓库 **Settings → Secrets and variables → Actions** 添加：
+`APPLE_CERTIFICATE`（粘贴 base64）、`APPLE_CERTIFICATE_PASSWORD`（导出密码）。
+
+> 未配置这两个 Secret 时，CI 的 macOS job 会回退到 ad-hoc 签名（无固定身份，
+> 钥匙串仍会每次弹密码）——不会失败，只是失去稳定签名的好处。
+
+### 升级 CI 为对外分发（Developer ID + 公证）
+
+把 `APPLE_SIGNING_IDENTITY` 改为 `Developer ID Application: ...`，并补上公证三件套即可
+（`tauri-cli` 同样自动识别）：
+
+- `APPLE_SIGNING_IDENTITY` = `Developer ID Application: 你的名字 (TEAMID)`
+- `APPLE_ID` / `APPLE_PASSWORD`（App 专用密码）/ `APPLE_TEAM_ID`
+
+或改用 App Store Connect API：`APPLE_API_ISSUER` + `APPLE_API_KEY` + `APPLE_API_KEY_PATH`。
+workflow 无需改结构，仅靠环境变量切换。
 
 ## 没有付费账号但想本机不弹？（免费替代）
 

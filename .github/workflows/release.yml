@@ -16,12 +16,17 @@ jobs:
       fail-fast: false # 一个平台失败不取消另一个
       matrix:
         include:
-          # Windows x64：NSIS 安装包
+          # Windows x64：NSIS（.exe 安装器）+ MSI
           - os: windows-latest
-            dist_script: dist:win
-          # macOS arm64：dmg + zip（macos-14 为 Apple Silicon）
+            bundles: nsis,msi
+            artifact_glob: |
+              src-tauri/target/release/bundle/nsis/*.exe
+              src-tauri/target/release/bundle/msi/*.msi
+          # macOS arm64：dmg（macos-14 为 Apple Silicon）
           - os: macos-14
-            dist_script: dist:mac
+            bundles: app,dmg
+            artifact_glob: |
+              src-tauri/target/release/bundle/dmg/*.dmg
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -38,9 +43,18 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          # electron 42 要求 Node >= 22.12
+          # 渲染层 Vite 打包需要 Node（beforeBuildCommand 会用到 pnpm）
           node-version: 22
           cache: pnpm
+
+      - name: Setup Rust toolchain
+        # Tauri 2 要求 Rust ≥ 1.77.2；各 runner 均为原生目标（win x64 / mac arm64），无需额外 target
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -64,30 +78,34 @@ jobs:
             fi
           } > RELEASE_NOTES.md
 
-      - name: Build & package app
-        # dist:win / dist:mac 脚本已内含 build:renderer（Vite 打包渲染层）
-        # 只打包，不让 electron-builder 创建 GitHub Release；上传统一交给下方 action-gh-release
-        run: pnpm run ${{ matrix.dist_script }}
+      - name: Build & package app (Tauri 2)
+        # tauri build 自动执行 beforeBuildCommand（pnpm build:renderer:tauri 打包渲染层），
+        # 再编译 Rust 后端并打包。产物落在 src-tauri/target/release/bundle/。
+        env:
+          # macOS 自签名「WeekLog Dev」：从 GitHub Secrets 注入一份固定的 .p12，使每次 CI 产出
+          # 签名身份稳定（用户点一次「始终允许」即长期生效，钥匙串不再反复弹密码）。
+          # 见 docs/signing-macos.md「CI」一节，首次需在本机生成证书并导出：
+          #   APPLE_CERTIFICATE          = base64 < WeekLog-Dev.p12
+          #   APPLE_CERTIFICATE_PASSWORD = 导出 p12 时设置的密码
+          # tauri-cli 读取这两个变量后自动导入临时钥匙串，并用 APPLE_SIGNING_IDENTITY 签名（不公证）。
+          # tauri.conf.json > bundle.macOS.signingIdentity 已硬编码为 "WeekLog Dev"，身份须与之匹配。
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.os == 'macos-14' && 'WeekLog Dev' || '' }}
+        shell: bash
+        run: pnpm exec tauri build --bundles ${{ matrix.bundles }}
 
       - name: Upload artifacts to workflow
         uses: actions/upload-artifact@v7
         with:
           name: weeklog-${{ matrix.os }}
-          path: |
-            release/*.exe
-            release/*.dmg
-            release/*-mac.zip
-            release/latest*.yml
+          path: ${{ matrix.artifact_glob }}
           if-no-files-found: warn
           retention-days: 14
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: |
-            release/*.exe
-            release/*.dmg
-            release/*-mac.zip
-            release/latest*.yml
+          files: ${{ matrix.artifact_glob }}
           fail_on_unmatched_files: false
           body_path: RELEASE_NOTES.md

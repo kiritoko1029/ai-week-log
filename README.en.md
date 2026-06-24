@@ -48,7 +48,7 @@ Reads commit logs from local Git repositories, combines them with **manual notes
 
 ```
 ai-week-log/
-├── package.json                # entry + electron-builder dual-platform config
+├── package.json                # entry + scripts
 ├── src/
 │   ├── main/                   # main process (Node)
 │   │   ├── index.js            # window creation, lifecycle, tray, global shortcut
@@ -118,8 +118,7 @@ source ~/.zshrc
 ### 3. Launch
 
 ```bash
-pnpm start            # normal launch
-pnpm dev              # with DevTools (WEEKLOG_DEV=1)
+pnpm tauri:dev        # launch the Tauri app (Vite dev server + Rust backend, HMR)
 ```
 
 On first launch: **Repos → Add repo / Scan folder** (register local Git repos and name the project) → in "AI & output settings" pick a provider/model (you can test the connection) → generate from "Generate weekly/daily".
@@ -129,12 +128,13 @@ On first launch: **Repos → Add repo / Scan folder** (register local Git repos 
 ## Build & Release
 
 ```bash
-pnpm dist:win     # Windows x64 installer (NSIS) → release/
-pnpm dist:mac     # macOS arm64 (dmg + zip) → release/
-pnpm dist         # build both platforms (macOS build must run on macOS)
+pnpm tauri:build        # compile Rust + bundle installers → src-tauri/target/release/bundle/
+                        #   Windows: nsis/*.exe + msi/*.msi
+                        #   macOS:   dmg/*.dmg (+ macos/*.app)
+pnpm tauri:dist:mac     # macOS signed build (self-signed "WeekLog Dev" by default; see docs/signing-macos.md)
 ```
 
-> ⚠️ The macOS arm64 build must be produced on macOS (Apple Silicon); the Windows x64 build on Windows. A CI matrix (GitHub Actions macos-latest + windows-latest) can produce both platforms automatically.
+> ⚠️ The macOS build must be produced on macOS (Apple Silicon); the Windows build on Windows. Pushing a `v*` tag triggers GitHub Actions (`.github/workflows/release.yml`, macos-14 + windows-latest matrix) to build both platforms and attach to the Release. macOS signing credentials are injected via `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` secrets (see docs/signing-macos.md "CI").
 
 ---
 

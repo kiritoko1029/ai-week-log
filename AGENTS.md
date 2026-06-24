@@ -7,13 +7,14 @@ WeekLog is an Electron desktop app. Main-process Node code lives in `src/main/`,
 ## Build, Test, and Development Commands
 
 - `pnpm install`: install dependencies; approve native build scripts listed in `pnpm-workspace.yaml` when prompted.
-- `pnpm dev`: build the renderer, then launch Electron with `WEEKLOG_DEV=1` and DevTools.
-- `pnpm start`: build the renderer and launch the app normally.
-- `pnpm dev:renderer`: run only the Vite renderer server.
-- `pnpm build:renderer`: produce `src/renderer/dist/`.
+- `pnpm tauri:dev`: launch the full Tauri app with HMR (runs Vite dev server + Rust backend).
+- `pnpm dev:renderer`: run only the Vite renderer server (Electron-flavored, port 5173).
+- `pnpm dev:renderer:tauri`: run only the Vite renderer server in Tauri mode (port 1430).
+- `pnpm build:renderer` / `pnpm build:renderer:tauri`: produce `src/renderer/dist/` (Vite build).
 - `pnpm typecheck`: run TypeScript checks for renderer code.
-- `node tests/_smoke.js`: run core logic smoke checks without Electron.
-- `pnpm dist:win` / `pnpm dist:mac`: create platform packages in `release/`.
+- `node tests/_smoke.js`: run core logic smoke checks (Node-only, against the legacy Electron `src/main/` tree).
+- `pnpm tauri:build`: compile the Rust backend + bundle installers into `src-tauri/target/release/bundle/` (Windows: `nsis/`+`msi/`; macOS: `dmg/`+`macos/`).
+- `pnpm tauri:dist:mac`: macOS signed build (`scripts/tauri-build-signed.sh`; self-signed `WeekLog Dev` by default, Developer ID if `APPLE_*` env set).
 
 ## Coding Style & Naming Conventions
 

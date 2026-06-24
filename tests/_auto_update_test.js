@@ -1,5 +1,10 @@
 'use strict'
-/* Auto-update smoke test: verifies updater wiring without starting Electron. */
+/* Auto-update smoke test: verifies updater wiring without starting the app.
+ *
+ * 外壳已从 Electron 迁移到 Tauri 2。自动更新在 Tauri 后端 src-tauri/src/updates.rs
+ * 中实现（手动 GitHub 流程：查最新版 → 下载安装包 → 打开由 OS 安装；不依赖
+ * electron-updater / latest.yml / minisign）。本测试覆盖 Tauri 后端 + 渲染层桥接/UI。
+ * 渲染层断言（types / SettingsPage / Statusbar）与 Electron 版相同——渲染层未改。 */
 const fs = require('fs')
 const path = require('path')
 
@@ -21,47 +26,27 @@ function ok(name, cond, extra) {
   }
 }
 
-console.log('\n[Package metadata]')
-const pkg = JSON.parse(read('package.json'))
-ok('depends on electron-updater', !!(pkg.dependencies && pkg.dependencies['electron-updater']))
-const publish = Array.isArray(pkg.build && pkg.build.publish) ? pkg.build.publish : []
-ok(
-  'publishes updates to GitHub Releases',
-  publish.some((p) => p.provider === 'github' && p.owner === 'kiritoko1029' && p.repo === 'ai-week-log'),
-  JSON.stringify(publish)
-)
-
-console.log('\n[Main process updater]')
-ok('updater module exists', fs.existsSync(path.join(root, 'src/main/updater.js')))
-if (fs.existsSync(path.join(root, 'src/main/updater.js'))) {
-  const updater = read('src/main/updater.js')
-  ok('exports createUpdaterController', updater.includes('createUpdaterController'))
-  ok('uses electron-updater autoUpdater', updater.includes('autoUpdater'))
-  ok('tracks startup disabled state', updater.includes('disabled') && updater.includes('isPackaged'))
-  ok('falls back to bundled GitHub publish source', updater.includes('DEFAULT_GITHUB_PUBLISH'))
-  ok('does not surface package build.publish as user-facing updater error', !updater.includes('未配置 GitHub 发布源（build.publish）'))
-  ok('updater accepts optional app logger', updater.includes('const logger = opts.logger || null'))
-  ok('mac installer logs through app logger without undefined log()', updater.includes("logger.info('updater.install'") && !updater.includes("    log('[updater]"))
+console.log('\n[Tauri backend updater]')
+ok('updater module exists', fs.existsSync(path.join(root, 'src-tauri/src/updates.rs')))
+if (fs.existsSync(path.join(root, 'src-tauri/src/updates.rs'))) {
+  const updater = read('src-tauri/src/updates.rs')
+  ok('queries GitHub releases API', updater.includes('api.github.com/repos'))
+  ok('uses reqwest for HTTP (not electron-updater at runtime)', updater.includes('reqwest::Client'))
+  ok('picks .exe on windows', /#\[cfg\(target_os = "windows"\)\][\s\S]*?\.exe/.test(updater))
+  ok('picks .dmg on macos', /#\[cfg\(target_os = "macos"\)\][\s\S]*?\.dmg/.test(updater))
+  ok('tracks startup disabled state (dev)', updater.includes('is_packaged') && updater.includes('disabled'))
+  ok('emits updates:update status event', updater.includes('updates:update'))
+  ok('exposes status/check/download/install', ['pub fn status', 'pub async fn check', 'pub async fn download', 'pub fn install'].every((s) => updater.includes(s)))
+  ok('compares semver versions', updater.includes('compare_versions'))
 }
-const ipc = read('src/main/ipc.js')
-ok('registers updates:status IPC', ipc.includes("ipcMain.handle('updates:status'"))
-ok('registers updates:check IPC', ipc.includes("ipcMain.handle('updates:check'"))
-ok('registers updates:download IPC', ipc.includes("ipcMain.handle('updates:download'"))
-ok('registers updates:install IPC', ipc.includes("ipcMain.handle('updates:install'"))
-ok('pushes updates:update event', ipc.includes("'updates:update'"))
-const main = read('src/main/index.js')
-ok('initializes updater controller', main.includes('createUpdaterController'))
-ok('passes logger to updater controller', /createUpdaterController\(\{[\s\S]*?\blogger\b[\s\S]*?\}\)/.test(main))
-ok('schedules startup update check', main.includes('scheduleStartupCheck'))
 
-console.log('\n[Renderer bridge]')
-const preload = read('src/preload/index.js')
-ok('preload exposes updates namespace', /updates:\s*{/.test(preload))
-ok('preload exposes updates.status', /updates:\s*{[\s\S]*?\bstatus:\s*\(/.test(preload))
-ok('preload exposes updates.check', /updates:\s*{[\s\S]*?\bcheck:\s*\(/.test(preload))
-ok('preload exposes updates.download', /updates:\s*{[\s\S]*?\bdownload:\s*\(/.test(preload))
-ok('preload exposes updates.install', /updates:\s*{[\s\S]*?\binstall:\s*\(/.test(preload))
-ok('preload exposes updates.onUpdate', /updates:\s*{[\s\S]*?\bonUpdate:\s*\(/.test(preload))
+console.log('\n[Tauri command registration]')
+const lib = read('src-tauri/src/lib.rs')
+ok('registers updates_status command', lib.includes('updates_status'))
+ok('registers updates_check command', lib.includes('updates_check'))
+ok('registers updates_download command', lib.includes('updates_download'))
+ok('registers updates_install command', lib.includes('updates_install'))
+ok('spawns startup update check in release', lib.includes('updates::check') && lib.includes('not(debug_assertions)'))
 
 console.log('\n[Renderer types and UI]')
 const types = read('src/renderer/src/types/weeklog.d.ts')
@@ -81,14 +66,15 @@ ok('Statusbar subscribes to update events', statusbar.includes('updates.onUpdate
 ok('Statusbar renders update reminder near version', statusbar.includes('statusbarUpdateText') && statusbar.includes('发现 v'))
 ok('Statusbar update reminder opens SettingsPage', statusbar.includes("navigate('settings')"))
 
-console.log('\n[Release packaging]')
-ok('dist:win disables electron-builder GitHub publishing', pkg.scripts['dist:win'].includes('--publish never'))
-ok('dist:mac disables electron-builder GitHub publishing', pkg.scripts['dist:mac'].includes('--publish never'))
+console.log('\n[Release workflow]')
+const pkg = JSON.parse(read('package.json'))
+ok('exposes tauri:build script', !!pkg.scripts['tauri:build'])
 const releaseWorkflow = read('.github/workflows/release.yml')
-ok('release workflow does not pass GH_TOKEN to electron-builder packaging', !releaseWorkflow.includes('GH_TOKEN:'))
+ok('release workflow runs tauri build', releaseWorkflow.includes('tauri build'))
 ok('release workflow fetches tags for release notes', releaseWorkflow.includes('fetch-depth: 0') && releaseWorkflow.includes('fetch-tags: true'))
 ok('release workflow writes commit-based release notes', releaseWorkflow.includes('Generate release notes') && releaseWorkflow.includes('RELEASE_NOTES.md'))
 ok('release action uses generated release notes body', releaseWorkflow.includes('body_path: RELEASE_NOTES.md'))
+ok('release workflow uploads bundle artifacts', releaseWorkflow.includes('src-tauri/target/release/bundle/'))
 
 console.log(`\nResult: ${pass} passed, ${fail} failed\n`)
 process.exit(fail ? 1 : 0)

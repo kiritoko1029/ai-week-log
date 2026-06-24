@@ -48,7 +48,7 @@
 
 ```
 ai-week-log/
-├── package.json                # 入口 + electron-builder 双平台配置
+├── package.json                # 入口 + 脚本
 ├── src/
 │   ├── main/                   # 主进程（Node 环境）
 │   │   ├── index.js            # 窗口创建、生命周期、托盘、全局快捷键
@@ -120,8 +120,7 @@ source ~/.zshrc
 ### 3. 启动应用
 
 ```bash
-pnpm start            # 普通启动
-pnpm dev              # 带 DevTools（WEEKLOG_DEV=1）
+pnpm tauri:dev        # 启动 Tauri 应用（Vite dev server + Rust 后端，HMR）
 ```
 
 首次启动后：**仓库管理 → 添加仓库 / 扫描文件夹**（注册本地 Git 仓库并命名项目）→ 在「AI 与输出设置」选择 provider/模型（可测试连接）→ 即可在「生成周报/日报」一键生成。
@@ -131,12 +130,13 @@ pnpm dev              # 带 DevTools（WEEKLOG_DEV=1）
 ## 打包发布
 
 ```bash
-pnpm dist:win     # Windows x64 安装包（NSIS）→ release/
-pnpm dist:mac     # macOS arm64（dmg + zip）→ release/
-pnpm dist         # 同时构建两个平台（macOS 包需在 macOS 上构建）
+pnpm tauri:build        # 编译 Rust + 打包安装器 → src-tauri/target/release/bundle/
+                        #   Windows: nsis/*.exe + msi/*.msi
+                        #   macOS:   dmg/*.dmg（+ macos/*.app）
+pnpm tauri:dist:mac     # macOS 签名打包（默认自签名 WeekLog Dev；详见 docs/signing-macos.md）
 ```
 
-> ⚠️ macOS arm64 包必须在 macOS（Apple Silicon）上构建；Windows x64 包在 Windows 上构建。CI 矩阵（GitHub Actions macos-latest + windows-latest）可自动产出双平台产物。
+> ⚠️ macOS 包须在 macOS（Apple Silicon）上构建；Windows 包在 Windows 上构建。推送 `v*` tag 会触发 GitHub Actions（`.github/workflows/release.yml`，macos-14 + windows-latest 矩阵）自动产出双平台安装包并附到 Release。macOS 签名凭据通过 `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` Secrets 注入（见 docs/signing-macos.md「CI」）。
 
 ---
 

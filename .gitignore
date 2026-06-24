@@ -21,3 +21,6 @@ eo.log
 # Tauri 2（与 Electron 并存的迁移期）：Rust 构建产物与 Tauri 生成的 schema
 src-tauri/target/
 src-tauri/gen/
+# 代码签名私钥（导出 CI 用的自签名/Developer ID 证书时产生，切勿提交）
+*.p12
+*.p12.*
