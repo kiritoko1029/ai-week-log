@@ -182,7 +182,6 @@ export interface ZcodeHookStatus {
   hookEnabled: boolean
   hookCount: number
   pluginPath: string
-  marketplacePath: string
   configPath: string
   hookError: string
 }
@@ -195,7 +194,6 @@ export interface ZcodeHookCopyConfigResult {
 
 export interface ZcodeHookInstallStatus {
   pluginPath: string
-  marketplacePath: string
   configPath: string
   exists: boolean
   installed: boolean
@@ -210,7 +208,6 @@ export interface ZcodeHookInstallResult {
   installed?: boolean
   removed?: number
   pluginPath?: string
-  marketplacePath?: string
   configPath?: string
   backups?: string[]
   endpoint?: string
@@ -725,6 +722,8 @@ declare global {
   }
   /** 应用版本号，由 vite 编译期从 package.json 注入 */
   const __APP_VERSION__: string
+  /** 是否为 Tauri 2 构建目标，由 vite define 在 WEEKLOG_TAURI=1 时注入为 true */
+  const __TAURI__: boolean
 }
 
 export {}

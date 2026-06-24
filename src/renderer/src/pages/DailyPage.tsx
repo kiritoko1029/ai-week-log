@@ -68,11 +68,16 @@ export function DailyPage() {
   const rangeOpts = useMemo(() => ({ mode: 'daily' as const, date }), [date])
   const { existing, loading } = useExistingReport('日报', rangeOpts, { weekStart: config?.weekStart })
 
-  // 送入 AI 对话润色
+  // 送入 AI 对话润色（historyId 让润色结果可覆盖回此日报）
   const goRefine = useCallback(() => {
     if (!displayReport) return
-    navigate('chat', { kind: 'reportRefine', reportText: displayReport, reportType: '日报' })
-  }, [displayReport, navigate])
+    navigate('chat', {
+      kind: 'reportRefine',
+      reportText: displayReport,
+      reportType: '日报',
+      historyId: gen.historyId ?? undefined,
+    })
+  }, [displayReport, navigate, gen.historyId])
 
   return (
     <div className="space-y-6">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity, ArchiveRestore, Copy, Globe } from 'lucide-react'
 import { ProviderBadge } from '@/components/BrandIcons'
 import { toast } from 'sonner'
@@ -95,6 +95,13 @@ export function SettingsPage() {
     if (config) setDraft(structuredClone(config))
   }, [config])
 
+  // config 加载/保存后，把快捷键录制器基线同步到已保存值：避免首渲染时 config 尚空、
+  // 录制器停留在默认值，进而被「未保存」检测误判。用户录制期间 config 不变，不会被打断。
+  useEffect(() => {
+    if (config) recorder.setAccel(config.ui?.quickNoteShortcut || 'CommandOrControl+Shift+L')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config])
+
   // 加载当前 provider 的 API Key + notesDir
   useEffect(() => {
     if (!draft) return
@@ -158,6 +165,19 @@ export function SettingsPage() {
       return next
     })
   }, [])
+
+  // 是否存在未保存改动：配置草稿 / 快捷键 / 待保存的 API Key / WebDAV 密码 任一与已保存态不同。
+  // 保存（handleSave）会一并持久化这几项，故都纳入比较；保存成功后 config 刷新 → draft 重置 → 归零。
+  const dirty = useMemo(() => {
+    if (!draft || !config) return false
+    const savedShortcut = config.ui?.quickNoteShortcut || 'CommandOrControl+Shift+L'
+    return (
+      JSON.stringify(draft) !== JSON.stringify(config) ||
+      recorder.accel !== savedShortcut ||
+      apiKey.trim() !== '' ||
+      webdavPassword !== ''
+    )
+  }, [draft, config, recorder.accel, apiKey, webdavPassword])
 
   const selectProvider = useCallback(
     (p: 'openai' | 'anthropic') => {
@@ -790,7 +810,7 @@ export function SettingsPage() {
             <div className="space-y-1.5">
               <Label>插件路径</Label>
               <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-                {zcodeHookStatus?.pluginPath || '~/.zcode/cli/plugins/cache/weeklog-hooks/weeklog-pending-note'}
+                {zcodeHookStatus?.pluginPath || '~/.zcode/cli/plugins/cache/zcode-plugins-official/weeklog-pending-note/1.0.0'}
               </p>
             </div>
             {zcodeHookStatus?.error && (
@@ -1555,8 +1575,20 @@ export function SettingsPage() {
         </TabsContent>
       </Tabs>
 
-      <div className="fixed bottom-12 right-8 z-30">
-        <Button onClick={handleSave} className="shadow-sm">
+      <div className="fixed bottom-12 right-8 z-30 flex items-center gap-2">
+        {dirty && (
+          <span className="flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 shadow-sm dark:bg-amber-950/60 dark:text-amber-300">
+            <span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
+            有未保存的修改
+          </span>
+        )}
+        <Button
+          onClick={handleSave}
+          className={cn(
+            'shadow-sm transition-colors',
+            dirty && 'bg-amber-600 text-white ring-2 ring-amber-400/60 hover:bg-amber-600/90'
+          )}
+        >
           <Save />
           保存设置
         </Button>

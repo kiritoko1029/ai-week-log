@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self' file:; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self' file: 'unsafe-inline'"
+      content="default-src 'self' file: ipc: http://ipc.localhost; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self' file: 'unsafe-inline'; connect-src 'self' file: ipc: http://ipc.localhost"
     />
     <link rel="icon" href="./icon.png" />
     <title>快速记笔记</title>

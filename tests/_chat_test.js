@@ -274,6 +274,14 @@ async function main() {
 
     ok('buildChatSystem 注入上下文', chat.buildChatSystem('XYZ').includes('XYZ'))
     ok('keyTerms 提取中文 2-gram', chat.keyTerms('登录模块').includes('登录'))
+    // 润色态：编辑者框架 + 待润色报告 + 参考记录
+    {
+      const sys = chat.buildRefineSystem('【待润色报告（周报）】\nAAA', 'BBB')
+      ok('buildRefineSystem 为编辑框架', sys.includes('报告润色助手') && sys.includes('完整报告'))
+      ok('buildRefineSystem 含待润色报告', sys.includes('AAA'))
+      ok('buildRefineSystem 含参考记录', sys.includes('【参考工作记录】') && sys.includes('BBB'))
+      ok('buildRefineSystem 无参考时省略参考段', !chat.buildRefineSystem('RRR', '').includes('【参考工作记录】'))
+    }
   }
 
   console.log('\n[5] 报告生成意图')

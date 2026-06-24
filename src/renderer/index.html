@@ -3,10 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- CSP：Electron file:// 加载，允许 file: 资源 + 内联样式（Tailwind/shadcn 注入） -->
+    <!-- CSP：Electron file:// 加载（file:）+ Tauri IPC（ipc: / http://ipc.localhost）。
+         内联样式供 Tailwind/shadcn 注入，内联脚本供 theme-init.js。 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self' file:; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self' file: 'unsafe-inline'"
+      content="default-src 'self' file: ipc: http://ipc.localhost; img-src 'self' data: file:; style-src 'self' 'unsafe-inline'; script-src 'self' file: 'unsafe-inline'; connect-src 'self' file: ipc: http://ipc.localhost"
     />
     <link rel="icon" href="./icon.png" />
     <title>WeekLog — Git 周报/日报生成工具</title>

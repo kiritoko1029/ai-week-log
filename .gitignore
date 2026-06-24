@@ -18,3 +18,6 @@ weeklog-desktop-app.html
 ee_app.log
 ee.log
 eo.log
+# Tauri 2（与 Electron 并存的迁移期）：Rust 构建产物与 Tauri 生成的 schema
+src-tauri/target/
+src-tauri/gen/

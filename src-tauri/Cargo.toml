@@ -1,0 +1,72 @@
+[package]
+name = "weeklog"
+version = "1.3.8"
+description = "WeekLog — 本地 Git 周报/日报生成桌面客户端"
+authors = ["WeekLog"]
+license = "MIT"
+# Tauri 2 要求 Rust edition 2021
+edition = "2021"
+rust-version = "1.77.2"
+
+# 见 https://tauri.app/v1/guides/features/command-line-interface/
+[lib]
+name = "weeklog_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+# 文件夹选择对话框（dialog.pickFolder/pickRepo/pickBackupFolder）
+tauri-plugin-dialog = "2"
+# 全局快捷键（快速记笔记唤起，对齐 Electron globalShortcut）
+tauri-plugin-global-shortcut = "2"
+# 序列化 IPC 请求/响应（对齐渲染层 WeeklogAPI 类型）
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 日期处理：笔记按本地日期组织文件，需要精确的本地时区（跨平台）
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+# git 日志解析 / 报告格式互转中的多处正则（忠实移植 JS 正则）
+regex = "1"
+# LLM HTTP 调用（OpenAI Responses / Anthropic Messages）。rustls 避免 OpenSSL 系统依赖。
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# 报告生成的并发 AI 总结（worker 池 → buffer_unordered）
+futures = "0.3"
+# 重试退避的异步 sleep + chat 流式的 mpsc channel（运行在 Tauri 的 tokio 运行时上）
+tokio = { version = "1", features = ["time", "sync"] }
+# WebDAV 同步：gzip 备份载荷 + URL 解析（SSRF 私网校验）+ Basic Auth base64
+flate2 = "1"
+url = "2"
+base64 = "0.22"
+# Codex/ZCode hook 本地 HTTP 入口（127.0.0.1 + Bearer token，对齐 Electron http 模块）
+tiny_http = "0.12"
+# hook token / 待处理小记 id 的密码学随机源（对齐 crypto.randomBytes / Math.random）
+getrandom = "0.2"
+
+# 本地 embedding（对齐 Electron 的 transformers.js→onnxruntime-node）：
+# ort = ONNX Runtime 包装；download-binaries 在构建期拉取并静态链接 ORT，产物自包含（适配 CI 双平台）。
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries"] }
+# HuggingFace 分词器：直接加载 tokenizer.json（XLM-RoBERTa / e5），onig 用于其内部正则（C 依赖，CI 具备工具链）。
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+# 系统钥匙串（API Key / WebDAV 密码 / hook token），等价 Electron safeStorage。
+# 按平台选后端：Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service。
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
+[features]
+# 默认启用自定义协议（自定义协议在正式构建才需要）
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+# 单元测试用临时目录（notes IO 测试）；仅测试期编译，不进生产二进制。
+tempfile = "3"

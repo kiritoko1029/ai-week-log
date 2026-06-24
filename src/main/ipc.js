@@ -478,7 +478,6 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer, zcodeHookSe
       hookEnabled: installStatus.enabled,
       hookCount: installStatus.hookCount,
       pluginPath: installStatus.pluginPath,
-      marketplacePath: installStatus.marketplacePath,
       configPath: installStatus.configPath,
       hookError: installStatus.error,
       ...status,
@@ -824,8 +823,11 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer, zcodeHookSe
     }
     // 不 await：立即回执 msgId，后台异步处理（意图识别 → 报告生成 或 问答）
     ;(async () => {
-      // 报告意图：规则预筛 → LLM 细判 → 命中则走真实生成流水线
-      if (chat.looksLikeReportRequest(content)) {
+      // 报告意图：规则预筛 → LLM 细判 → 命中则走真实生成流水线。
+      // 润色态（带 context）跳过：用户意图始终是修改当前报告，否则形如「帮我把周报整理简洁」
+      // 会被误判为重新生成、丢掉润色上下文与具体指令。
+      const isRefine = context && String(context).trim()
+      if (!isRefine && chat.looksLikeReportRequest(content)) {
         send({ type: 'report_progress', stage: '理解中' })
         const intent = await chat.detectReportIntent({ cfg, apiKey: key, text: content, now: new Date() })
         if (intent && intent.action === 'generate' && intent.reportType) {

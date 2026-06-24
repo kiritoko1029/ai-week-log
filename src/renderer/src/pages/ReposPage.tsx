@@ -341,7 +341,7 @@ function ScanRepoDialog({
         onOpenChange(o)
       }}
     >
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>扫描文件夹</DialogTitle>
         </DialogHeader>
@@ -420,7 +420,7 @@ function ScanRepoDialog({
             <p className="py-4 text-center text-sm text-muted-foreground">点击「扫描」开始查找</p>
           )}
         </div>
-        <DialogFooter>
+        <DialogFooter className="sticky bottom-0 bg-background/95 backdrop-blur">
           <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
           <Button onClick={confirm} disabled={adding || selected.size === 0}>
             {adding ? <Loader2 className="animate-spin" /> : <Plus />}

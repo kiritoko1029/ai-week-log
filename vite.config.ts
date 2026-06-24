@@ -27,9 +27,15 @@ function stripCrossorigin(): Plugin {
 
 // WeekLog renderer build：主窗口（index）+ 快速记笔记（quicknote）两个入口。
 // 输出到 src/renderer/dist，由 electron loadFile 加载（base 用相对路径）。
+//
+// 双外壳支持：设置环境变量 WEEKLOG_TAURI=1 时，把 @/lib/api 别名指向 Tauri 版
+// 桥接（api.tauri.ts）并注入 __TAURI__，使同一份渲染层源码服务 Tauri 2 外壳。
+// 不设置时维持 Electron 行为（window.weeklog）。两种构建互不污染。
+const isTauri = process.env.WEEKLOG_TAURI === '1'
+
 export default defineConfig(({ mode }) => {
   return {
-    plugins: [react(), tailwindcss(), stripCrossorigin()],
+    plugins: [react(), tailwindcss(), ...(isTauri ? [] : [stripCrossorigin()])],
     base: './',
     root: resolve(__dirname, 'src/renderer'),
     resolve: {
@@ -40,6 +46,7 @@ export default defineConfig(({ mode }) => {
     define: {
       __DEV__: JSON.stringify(mode === 'development'),
       __APP_VERSION__: JSON.stringify(appVersion),
+      ...(isTauri ? { __TAURI__: 'true' } : {}),
     },
     build: {
       outDir: 'dist',
@@ -54,7 +61,9 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 5173,
+      // Tauri 构建用 1430（避开本机保留端口区间 5096-5195，也避开易留 TimeWait 的 1420）；
+      // Electron 构建保持 5173。strictPort 确保端口被占时直接报错而非静默换端口。
+      port: isTauri ? 1430 : 5173,
       strictPort: true,
     },
   }
