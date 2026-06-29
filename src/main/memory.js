@@ -3,9 +3,9 @@
 /**
  * AI 记忆系统：
  * - 存储：memory/index.json（轻量：id/date/project/keywords/digest/embedding）+ memory/entries/{id}.md（全文，按需加载）
- * - embedding：本地优先（Transformers.js ONNX）、可切换 API（OpenAI）；异步队列后台补算
+ * - embedding：本地优先（Transformers.js ONNX）、可切换 API（OpenAI）；模型下载由用户手动触发
  * - 检索：关键词预筛 + 语义余弦重排（hybrid），仅对 topK 才加载全文 → 渐进式加载，省 token
- * - 生成：报告完成后由 pipeline 触发 buildMemoryEntry → LLM 压缩 → saveEntry（含入队 embedding）
+ * - 生成：报告完成后由 pipeline 触发 buildMemoryEntry → LLM 压缩 → saveEntry（模型已就绪时才入队 embedding）
  */
 
 const fs = require('fs')
@@ -190,9 +190,9 @@ async function configureModelSource(transformers, source) {
 
 /**
  * 懒加载本地 Transformers.js pipeline。
- * 首次调用时按 modelSource 下载模型，带进度回调，缓存到 userData/models。
+ * 默认只加载已落盘模型；只有用户手动下载时才允许远程拉取。
  */
-async function getLocalPipeline(modelName, cacheDir, modelSource) {
+async function getLocalPipeline(modelName, cacheDir, modelSource, { allowDownload = false } = {}) {
   if (_localPipeline && _localModel === modelName) return _localPipeline
   if (_localLoading) return _localLoading
   _localLoading = (async () => {
@@ -205,13 +205,14 @@ async function getLocalPipeline(modelName, cacheDir, modelSource) {
           transformers.env.cacheDir = cacheDir
         } catch {}
       }
-      // 配置下载源（auto 会探测连通性，可能异步）
-      const resolvedSource = await configureModelSource(transformers, modelSource || 'auto')
+      // 配置下载源（auto 会探测连通性，可能异步）；仅手动下载时需要。
+      const resolvedSource = allowDownload ? await configureModelSource(transformers, modelSource || 'auto') : 'local'
       // 禁用浏览器缓存（Node 环境不需要）
       try {
         transformers.env.useBrowserCache = false
         transformers.env.useFSCache = true
-        transformers.env.allowLocalModels = false // 强制走 remote，避免找不到本地模型报错
+        transformers.env.allowLocalModels = true
+        transformers.env.allowRemoteModels = allowDownload
       } catch {}
 
       const { pipeline } = transformers
@@ -237,16 +238,17 @@ async function getLocalPipeline(modelName, cacheDir, modelSource) {
         } catch {}
       }
 
-      _progressCallback?.({ phase: 'start', model: modelName, source: resolvedSource })
+      if (allowDownload) _progressCallback?.({ phase: 'start', model: modelName, source: resolvedSource })
       _localPipeline = await pipeline('feature-extraction', modelName, {
         progress_callback: progressCb,
+        local_files_only: !allowDownload,
       })
       _localModel = modelName
-      _progressCallback?.({ phase: 'complete', model: modelName })
+      if (allowDownload) _progressCallback?.({ phase: 'complete', model: modelName })
       return _localPipeline
     } catch (e) {
       console.warn('[memory] 本地 embedding 模型加载失败：', e.message)
-      _progressCallback?.({ phase: 'error', model: modelName, error: e.message })
+      if (allowDownload) _progressCallback?.({ phase: 'error', model: modelName, error: e.message })
       _localPipeline = null
       _localModel = ''
       throw e
@@ -258,7 +260,7 @@ async function getLocalPipeline(modelName, cacheDir, modelSource) {
 }
 
 /** 对单条文本生成 embedding 向量 */
-async function embed(text, cfg, dir) {
+async function embed(text, cfg, dir, { allowDownload = false } = {}) {
   if (!text || !text.trim()) return null
   const memCfg = (cfg && cfg.memory) || {}
   const source = memCfg.embeddingSource || 'local'
@@ -270,8 +272,11 @@ async function embed(text, cfg, dir) {
   }
   // 本地
   const cacheDir = resolveModelCacheDir(dir)
+  if (!allowDownload && !probeLocalModel(model, dir).ready) {
+    return null
+  }
   try {
-    const extractor = await getLocalPipeline(model, cacheDir, modelSource)
+    const extractor = await getLocalPipeline(model, cacheDir, modelSource, { allowDownload })
     // multilingual-e5 约定：query/passage 前缀
     const input = `query: ${text}`
     const output = await extractor(input, { pooling: 'mean', normalize: true })
@@ -282,6 +287,42 @@ async function embed(text, cfg, dir) {
     console.warn('[memory] 本地 embedding 计算失败，回退 null：', e.message)
     return null
   }
+}
+
+async function downloadLocalModel(dir, cfg) {
+  const memCfg = (cfg && cfg.memory) || {}
+  const model = memCfg.embeddingModel || 'Xenova/multilingual-e5-small'
+  const modelSource = memCfg.modelSource || 'auto'
+  const cacheDir = resolveModelCacheDir(dir)
+  await getLocalPipeline(model, cacheDir, modelSource, { allowDownload: true })
+  const probe = probeLocalModel(model, dir)
+  return { ok: probe.ready, model, cacheDir: probe.cacheDir, modelDir: probe.modelDir, sizeMB: probe.sizeMB }
+}
+
+function openModelFolder(dir, cfg, shell) {
+  const memCfg = (cfg && cfg.memory) || {}
+  const model = memCfg.embeddingModel || 'Xenova/multilingual-e5-small'
+  const probe = probeLocalModel(model, dir)
+  const target = probe.ready && probe.modelDir ? probe.modelDir : resolveModelCacheDir(dir)
+  fs.mkdirSync(target, { recursive: true })
+  if (shell && typeof shell.openPath === 'function') shell.openPath(target)
+  return { ok: true, path: target }
+}
+
+function clearLocalModel(dir, cfg) {
+  const memCfg = (cfg && cfg.memory) || {}
+  const model = memCfg.embeddingModel || 'Xenova/multilingual-e5-small'
+  const probe = probeLocalModel(model, dir)
+  const target = probe.modelDir || path.join(resolveModelCacheDir(dir), model)
+  try {
+    fs.rmSync(target, { recursive: true, force: true })
+  } catch {}
+  if (_localModel === model) {
+    _localPipeline = null
+    _localModel = ''
+    _localLoading = null
+  }
+  return { ok: true, model, path: target }
 }
 
 /** 调用 OpenAI embedding API（复用 openai 配置） */
@@ -454,7 +495,7 @@ async function processEmbedding(dir, cfg, id) {
   if (item.embedding && item.embedding.length) return // 已有
   // 用 project + digest + keywords 作为 embedding 输入
   const text = [item.project, item.digest, ...(item.keywords || [])].join(' ')
-  const vec = await embed(text, cfg, dir)
+  const vec = await embed(text, cfg, dir, { allowDownload: false })
   if (vec && vec.length) {
     item.embedding = vec
     item.embeddingReady = true
@@ -666,7 +707,7 @@ async function search(dir, query, { topK = 5, cfg = null } = {}) {
   let qVec = null
   if (cfg) {
     try {
-      qVec = await embed(query, cfg, dir)
+      qVec = await embed(query, cfg, dir, { allowDownload: false })
     } catch {
       qVec = null
     }
@@ -811,8 +852,12 @@ module.exports = {
   rebuild,
   enqueueEmbedding,
   queueStatus,
+  processEmbedding,
   getStatus,
   probeLocalModel,
+  downloadLocalModel,
+  openModelFolder,
+  clearLocalModel,
   resolveModelCacheDir,
   tokenize,
   cosine,

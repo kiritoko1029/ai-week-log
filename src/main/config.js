@@ -78,11 +78,11 @@ function defaultConfig() {
       // password 不落盘，走 secrets.js 加密存储（provider='webdav'）
     },
     memory: {
-      enabled: true,
+      enabled: false,
       embeddingSource: 'local', // local | api
       embeddingModel: 'Xenova/multilingual-e5-small',
       modelSource: 'auto', // auto | huggingface | modelscope（auto：探测魔搭可达性，通则魔搭否则回退 HF）
-      autoGenerate: true, // 报告生成后自动产出记忆
+      autoGenerate: false, // 报告生成后自动产出记忆
       topK: 5, // 检索时注入 LLM 的记忆条数上限
     },
     proxy: {

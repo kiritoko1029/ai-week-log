@@ -651,6 +651,9 @@ export interface WeeklogAPI {
     search: (query: string, topK?: number) => Promise<MemorySearchHit[]>
     queueStatus: () => Promise<MemoryQueueStatus>
     status: () => Promise<MemoryStatus>
+    downloadModel: () => Promise<{ ok: boolean; error?: string; model?: string; cacheDir?: string; modelDir?: string; sizeMB?: number }>
+    openModelFolder: () => Promise<{ ok: boolean; path?: string }>
+    clearModel: () => Promise<{ ok: boolean; model?: string; path?: string }>
     rebuild: () => Promise<{ generated: number; failed: number; error?: string }>
     remove: (id: string) => Promise<{ ok: boolean }>
     inferProject: (noteText: string) => Promise<MemoryInferResult>

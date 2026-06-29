@@ -62,7 +62,7 @@ const floatingSaveIdx = settings.indexOf('fixed')
 ok('Save action is rendered as a floating control', floatingSaveIdx !== -1 && saveTextIdx > floatingSaveIdx)
 ok('Floating save action is anchored near the bottom edge', settings.includes('bottom-'))
 ok('Settings page reserves bottom space for the floating save action', /className="[^"]*\bpb-/.test(settings))
-const floatingSaveClass = /<div className="([^"]*\bfixed\b[^"]*)">\s*<Button onClick=\{handleSave\}/.exec(settings)?.[1] || ''
+const floatingSaveClass = /<div className="([^"]*\bfixed\b[^"]*)">[\s\S]*?<Button\s+onClick=\{handleSave\}/.exec(settings)?.[1] || ''
 ok('Floating save wrapper has no visual border', floatingSaveClass !== '' && !/\bborder\b/.test(floatingSaveClass), floatingSaveClass)
 
 console.log(`\nResult: ${pass} passed, ${fail} failed\n`)

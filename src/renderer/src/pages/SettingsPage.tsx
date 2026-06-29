@@ -49,6 +49,8 @@ export function SettingsPage() {
   const [memQueue, setMemQueue] = useState<MemoryQueueStatus | null>(null)
   const [memStatus, setMemStatus] = useState<MemoryStatus | null>(null)
   const [rebuildingMem, setRebuildingMem] = useState(false)
+  const [downloadingMemModel, setDownloadingMemModel] = useState(false)
+  const [clearingMemModel, setClearingMemModel] = useState(false)
   const [memDialogOpen, setMemDialogOpen] = useState(false)
 
   // 写作偏好（报告生成注入）
@@ -345,6 +347,49 @@ export function SettingsPage() {
       setRebuildingMem(false)
     }
   }, [])
+
+  const downloadMemoryModel = useCallback(async () => {
+    setDownloadingMemModel(true)
+    try {
+      const r = await api.memory.downloadModel()
+      if (r.error || !r.ok) {
+        toast.error(r.error || '模型下载失败')
+      } else {
+        toast.success('模型已下载', { description: r.sizeMB ? `${r.sizeMB}MB` : r.model })
+        refreshMemStatus()
+      }
+    } catch (e: any) {
+      toast.error('模型下载失败：' + (e?.message || '未知错误'))
+    } finally {
+      setDownloadingMemModel(false)
+    }
+  }, [refreshMemStatus])
+
+  const openMemoryModelFolder = useCallback(async () => {
+    try {
+      const r = await api.memory.openModelFolder()
+      if (!r.ok) toast.error('打开模型文件夹失败')
+    } catch (e: any) {
+      toast.error('打开模型文件夹失败：' + (e?.message || '未知错误'))
+    }
+  }, [])
+
+  const clearMemoryModel = useCallback(async () => {
+    if (!confirm('清理本地 Embedding 模型？之后需要手动重新下载，AI 记忆会降级为关键词检索。')) return
+    setClearingMemModel(true)
+    try {
+      const r = await api.memory.clearModel()
+      if (!r.ok) toast.error('清理模型失败')
+      else {
+        toast.success('模型已清理')
+        refreshMemStatus()
+      }
+    } catch (e: any) {
+      toast.error('清理模型失败：' + (e?.message || '未知错误'))
+    } finally {
+      setClearingMemModel(false)
+    }
+  }, [refreshMemStatus])
 
   // 记忆：删除单条
   const removeMemory = useCallback(async (id: string) => {
@@ -1401,7 +1446,7 @@ export function SettingsPage() {
                           memStatus.source === 'local' ? (
                             memStatus.modelReady
                               ? `✓ 已就绪 · ${memStatus.modelSizeMB}MB`
-                              : '⚠ 未下载（首次生成报告后自动下载）'
+                              : '⚠ 未下载（模型不会自动下载）'
                           ) : (
                             `OpenAI Embedding · ${memStatus.model.replace('Xenova/', '')}`
                           )
@@ -1411,6 +1456,42 @@ export function SettingsPage() {
                         <p className="truncate text-[11px] text-muted-foreground/70" title={memStatus.model}>
                           {memStatus.model}
                         </p>
+                      )}
+                      {memStatus?.source === 'local' && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            type="button"
+                            className="h-7 px-2 text-xs"
+                            onClick={downloadMemoryModel}
+                            disabled={downloadingMemModel}
+                          >
+                            {downloadingMemModel ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
+                            下载模型
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            type="button"
+                            className="h-7 px-2 text-xs"
+                            onClick={openMemoryModelFolder}
+                          >
+                            <FolderOpen className="size-3" />
+                            打开模型文件夹
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            type="button"
+                            className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                            onClick={clearMemoryModel}
+                            disabled={clearingMemModel || !memStatus.modelReady}
+                          >
+                            {clearingMemModel ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                            清理模型
+                          </Button>
+                        </div>
                       )}
                     </div>
                   </div>

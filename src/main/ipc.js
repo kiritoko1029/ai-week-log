@@ -722,6 +722,22 @@ function registerIpc({ app, getMainWindow, updater, codexHookServer, zcodeHookSe
     const cfg = getConfig()
     return memory.getStatus(userDataDir, cfg)
   })
+  ipcMain.handle('memory:downloadModel', async () => {
+    const cfg = getConfig()
+    try {
+      return await memory.downloadLocalModel(userDataDir, cfg)
+    } catch (e) {
+      return { ok: false, error: e.message || '模型下载失败' }
+    }
+  })
+  ipcMain.handle('memory:openModelFolder', () => {
+    const cfg = getConfig()
+    return memory.openModelFolder(userDataDir, cfg, shell)
+  })
+  ipcMain.handle('memory:clearModel', () => {
+    const cfg = getConfig()
+    return memory.clearLocalModel(userDataDir, cfg)
+  })
   ipcMain.handle('memory:rebuild', async () => {
     const cfg = getConfig()
     const { key, has } = resolveApiKey(cfg, (p) => secrets.getKey(userDataDir, p))

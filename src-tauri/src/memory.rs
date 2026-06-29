@@ -1,9 +1,8 @@
 //! AI 记忆系统（忠实移植 src/main/memory.js）。
 //!
 //! - 存储：memory/index.json（轻量 id/date/project/keywords/digest/embedding）+ memory/entries/{id}.md（全文）
-//! - embedding：API（OpenAI，reqwest）已实现；**本地 ONNX（Transformers.js→ort）路线尚未集成**，
-//!   `embed` 在 local 源下返回 None——与 JS 本地模型缺失时一致：检索自动降级为关键词预筛。
-//!   接入 ort 后只需在 `embed` 的 local 分支补「加载 onnx+tokenizer → 推理 → mean-pool → 归一化」。
+//! - embedding：API（OpenAI，reqwest）+ 本地 ONNX；本地模型下载由用户手动触发，
+//!   自动检索/向量化只复用已落盘模型，缺失时降级为关键词预筛。
 //! - 检索：关键词预筛 + 语义余弦重排（有向量才重排）；仅 topK 加载全文。
 //! - 生成：报告完成后由 pipeline 触发 build_memory_entry → save_entry → 入队 embedding。
 
@@ -219,7 +218,7 @@ fn tokenize(text: &str) -> Vec<String> {
 
 /// 对单条文本生成 embedding 向量。
 /// - api：调用 OpenAI embeddings。
-/// - local：加载本地 onnx（缺则下载）→ 推理 → mean-pool → L2 归一化（对齐 JS transformers.js）。
+/// - local：只加载已落盘 onnx → 推理；缺模型时返回 None，不自动下载。
 async fn embed(app: &AppHandle, cfg: &Value, api_key: &str, text: &str) -> Option<Vec<f64>> {
     if text.trim().is_empty() {
         return None;
@@ -232,9 +231,8 @@ async fn embed(app: &AppHandle, cfg: &Value, api_key: &str, text: &str) -> Optio
     if source == "api" {
         return embed_via_api(cfg, api_key, &model, text).await.unwrap_or(None);
     }
-    // 本地 ONNX
-    let model_source = cfg["memory"]["modelSource"].as_str().unwrap_or("auto").to_string();
-    let dir = ensure_model(app, &model, &model_source).await?;
+    // 本地 ONNX：缺模型时直接降级，不触发网络下载。
+    let dir = find_model_dir(app, &model)?;
     // multilingual-e5 约定：query/passage 前缀（与 JS 一致，存储/查询都用 query:）
     let input = format!("query: {}", text);
     let model_key = model;
@@ -379,8 +377,8 @@ async fn download_file(
     Ok(())
 }
 
-/// 确保本地模型文件就绪：先复用已有目录，缺失则下载到 Tauri 缓存目录。返回模型目录。
-async fn ensure_model(app: &AppHandle, model: &str, source: &str) -> Option<PathBuf> {
+/// 手动下载本地模型：先复用已有目录，缺失则下载到 Tauri 缓存目录。返回模型目录。
+async fn download_model(app: &AppHandle, model: &str, source: &str) -> Option<PathBuf> {
     if let Some(dir) = find_model_dir(app, model) {
         return Some(dir);
     }
@@ -410,6 +408,77 @@ async fn ensure_model(app: &AppHandle, model: &str, source: &str) -> Option<Path
     app.state::<tasks::Tasks>()
         .done(&task_id, json!({ "model": model }));
     Some(dest)
+}
+
+pub async fn download_local_model(app: &AppHandle, cfg: &Value) -> Value {
+    let model = cfg["memory"]["embeddingModel"]
+        .as_str()
+        .unwrap_or("Xenova/multilingual-e5-small");
+    let source = cfg["memory"]["modelSource"].as_str().unwrap_or("auto");
+    match download_model(app, model, source).await {
+        Some(dir) => {
+            let bytes = dir_size(&dir);
+            json!({
+                "ok": true,
+                "model": model,
+                "cacheDir": model_cache_dir(app).to_string_lossy().to_string(),
+                "modelDir": dir.to_string_lossy().to_string(),
+                "sizeMB": ((bytes as f64 / 1024.0 / 1024.0) * 10.0).round() / 10.0,
+            })
+        }
+        None => json!({ "ok": false, "error": "模型下载失败" }),
+    }
+}
+
+pub fn open_model_folder(app: &AppHandle, cfg: &Value) -> Value {
+    let model = cfg["memory"]["embeddingModel"]
+        .as_str()
+        .unwrap_or("Xenova/multilingual-e5-small");
+    let target = find_model_dir(app, model).unwrap_or_else(|| model_cache_dir(app));
+    let _ = fs::create_dir_all(&target);
+    let ok = open_path(&target).is_ok();
+    json!({ "ok": ok, "path": target.to_string_lossy().to_string() })
+}
+
+pub fn clear_local_model(app: &AppHandle, cfg: &Value) -> Value {
+    let model = cfg["memory"]["embeddingModel"]
+        .as_str()
+        .unwrap_or("Xenova/multilingual-e5-small");
+    let target = find_model_dir(app, model).unwrap_or_else(|| model_cache_dir(app).join(model));
+    let _ = fs::remove_dir_all(&target);
+    if let Ok(mut guard) = LOCAL_MODEL.lock() {
+        if guard.as_ref().map(|(m, _, _)| m == model).unwrap_or(false) {
+            *guard = None;
+        }
+    }
+    json!({ "ok": true, "model": model, "path": target.to_string_lossy().to_string() })
+}
+
+fn open_path(path: &PathBuf) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
 }
 
 // ── 本地模型：ONNX 推理（同步，进程级缓存 session+tokenizer）──

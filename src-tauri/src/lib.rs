@@ -1075,6 +1075,24 @@ fn memory_status(app: AppHandle) -> Value {
 }
 
 #[tauri::command]
+async fn memory_download_model(app: AppHandle) -> Value {
+    let cfg = config::load_config(&app);
+    memory::download_local_model(&app, &cfg).await
+}
+
+#[tauri::command]
+fn memory_open_model_folder(app: AppHandle) -> Value {
+    let cfg = config::load_config(&app);
+    memory::open_model_folder(&app, &cfg)
+}
+
+#[tauri::command]
+fn memory_clear_model(app: AppHandle) -> Value {
+    let cfg = config::load_config(&app);
+    memory::clear_local_model(&app, &cfg)
+}
+
+#[tauri::command]
 async fn memory_rebuild(app: AppHandle) -> Value {
     let cfg = config::load_config(&app);
     let resolved = secrets::resolve_api_key(&cfg);
@@ -1238,6 +1256,9 @@ pub fn run() {
             memory_search,
             memory_queue_status,
             memory_status,
+            memory_download_model,
+            memory_open_model_folder,
+            memory_clear_model,
             memory_rebuild,
             memory_delete,
             memory_infer_project,

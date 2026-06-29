@@ -49,11 +49,11 @@ pub fn default_config() -> Value {
             "backupRetention": 10
         },
         "memory": {
-            "enabled": true,
+            "enabled": false,
             "embeddingSource": "local",
             "embeddingModel": "Xenova/multilingual-e5-small",
             "modelSource": "auto",
-            "autoGenerate": true,
+            "autoGenerate": false,
             "topK": 5
         },
         "proxy": { "mode": "system", "url": "" }
