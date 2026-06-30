@@ -58,7 +58,7 @@ function makeFixture() {
     timezone: 'Asia/Shanghai',
     repos: [{ id: 'r1', path: '/Users/me/private-project', name: 'private-project' }],
     notes: { enabled: true, miscProject: '日常工作', dir: notesDir },
-    codexHook: { enabled: true, port: 17321 },
+    mcp: { enabled: true, port: 17300 },
     ui: { theme: 'dark', quickNoteShortcut: 'CommandOrControl+Shift+L' },
     output: { format: 'text', newline: 'LF', withCommits: false, showNotes: false },
     memory: { enabled: true, embeddingSource: 'local', embeddingModel: 'Xenova/multilingual-e5-small', topK: 5 },
@@ -90,7 +90,7 @@ if (typeof L.createLocalBackup === 'function') {
     ok('zip contains custom notes', entries['notes/2026-06-17.md'] === '本地备份内容')
     ok('zip contains memory and history', entries['memory/entries/m1.md'] === '记忆内容' && entries['history.json'].includes('历史'))
     ok('zip config excludes local repo paths', entries['config.json'] && !entries['config.json'].includes('/Users/me/private-project'))
-    ok('zip config keeps codex hook preference only', entries['config.json'].includes('"codexHook"') && !entries['config.json'].includes('codexHookToken'))
+    ok('zip config keeps mcp preference', entries['config.json'].includes('"mcp"') && entries['config.json'].includes('17300'))
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

@@ -10,6 +10,7 @@ Reads commit logs from local Git repositories, combines them with **manual notes
 - **Dual-source fusion**: commits (code work) + notes (non-code work) are both fed to the AI, organized by *date → project*, 3–5 sentences per section.
 - **Dual LLM backends**: OpenAI Responses API / Anthropic Messages API — switch with one config line, with a built-in connection test.
 - **AI memory system**: local vector embeddings (Transformers.js + ONNX) + semantic retrieval accumulates context across reports and auto-infers the relevant project while you write notes.
+- **AI notes (Skill + MCP)**: one-click install a skill into Codex / Claude Code / ZCode and register a local MCP service; at the end of a conversation the cleaned "user prompts + AI replies" are sent back to WeekLog, summarized by a configurable "note summary model" into a Chinese note that lands in a pending pool for manual confirmation before being written to notes.
 - **WebDAV cloud sync**: notes / config / history synced across devices, with dedup + conflict alerts.
 - **Cross-platform desktop app**: macOS (Apple Silicon / arm64) + Windows (x64).
 - **Local-first**: network requests only happen when calling the LLM; notes, config, and memory all stay local.
@@ -40,6 +41,7 @@ Reads commit logs from local Git repositories, combines them with **manual notes
 | AI & output settings | Switch provider, model / baseUrl / temperature, **connection test**, notes dir, output format, concurrency & fault tolerance |
 | WebDAV sync | Bidirectional sync (pull / push / both), status panel, encrypted password storage |
 | AI memory | Local vector store, accumulates across reports, semantic retrieval injection, view / rebuild / delete |
+| AI notes | One-click install a skill + register a local MCP service for Codex / Claude Code / ZCode; conversations are auto-summarized into a pending pool, written to notes after manual confirmation |
 | Quick note | Global shortcut summons a floating window (default `Cmd/Ctrl+Shift+L`), auto-categorizes by project |
 
 ---

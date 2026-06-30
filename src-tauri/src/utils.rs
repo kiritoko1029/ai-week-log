@@ -204,3 +204,11 @@ pub fn now_iso() -> String {
         .format("%Y-%m-%dT%H:%M:%S%.3fZ")
         .to_string()
 }
+
+/// 密码学随机 32 字节 → 64 位十六进制串（对齐 crypto.randomBytes(32).toString('hex')）。
+/// 用于 MCP Bearer token 等需要不可预测性的场景。
+pub fn random_token() -> String {
+    let mut buf = [0u8; 32];
+    let _ = getrandom::getrandom(&mut buf);
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
+}

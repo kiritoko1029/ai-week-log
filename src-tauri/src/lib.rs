@@ -11,11 +11,13 @@ mod chat;
 mod config;
 mod git;
 mod history;
-mod hooks;
+mod integration;
 mod llm;
 mod logger;
+mod mcp;
 mod memory;
 mod notes;
+mod notes_pool;
 mod pipeline;
 mod prefs;
 mod prompt;
@@ -48,8 +50,8 @@ const SHORTCUT_DEFAULT: &str = "CommandOrControl+Shift+L";
 struct AppState {
     git_ok: Mutex<Option<bool>>,
     shortcut: Mutex<String>,
-    codex_hook: hooks::HookServer,
-    zcode_hook: hooks::HookServer,
+    /// 内置 MCP HTTP 服务（接收 AI agent 经 skill 发回的对话；取代旧 hook 入口）。
+    mcp: mcp::McpServer,
     /// 进行中的 chat 流式：msgId → 取消标志（chat:cancel 置位，stream 循环检查）。
     chat_streams: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// 自动更新状态（check/download/install 跨命令共享；Arc 便于异步命令克隆出 owned 句柄）。
@@ -61,8 +63,7 @@ impl Default for AppState {
         AppState {
             git_ok: Mutex::new(None),
             shortcut: Mutex::new(String::new()),
-            codex_hook: hooks::HookServer::new(hooks::HookKind::Codex),
-            zcode_hook: hooks::HookServer::new(hooks::HookKind::Zcode),
+            mcp: mcp::McpServer::new(),
             chat_streams: Mutex::new(HashMap::new()),
             updater: Arc::new(Mutex::new(updates::UpdaterState::default())),
         }
@@ -79,23 +80,15 @@ fn config_get(app: AppHandle) -> Value {
 #[tauri::command]
 fn config_save(app: AppHandle, state: State<'_, AppState>, cfg: Value) -> Result<Value, String> {
     let saved = config::save_config(&app, &cfg)?;
-    // 对齐 ipc.js persist：启用时确保 token，随后按新配置启停 hook 服务
-    if saved["codexHook"]["enabled"].as_bool().unwrap_or(false) {
-        hooks::ensure_token(hooks::HookKind::Codex);
-    }
-    if saved["zcodeHook"]["enabled"].as_bool().unwrap_or(false) {
-        hooks::ensure_token(hooks::HookKind::Zcode);
-    }
-    state.codex_hook.apply_config(&app);
-    state.zcode_hook.apply_config(&app);
+    // 按新配置启停内置 MCP 服务（enabled/port 变更立即生效）
+    state.mcp.apply_config(&app);
     Ok(saved)
 }
 
 #[tauri::command]
 fn config_reset(app: AppHandle, state: State<'_, AppState>) -> Result<Value, String> {
     let saved = config::reset_config(&app)?;
-    state.codex_hook.apply_config(&app);
-    state.zcode_hook.apply_config(&app);
+    state.mcp.apply_config(&app);
     Ok(saved)
 }
 
@@ -852,96 +845,74 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-// ── Codex / ZCode hook 待处理小记 ──
+// ── AI 小记待处理池（统一，取代旧 Codex/ZCode 双池）──
 
 #[tauri::command]
-fn codex_notes_list(app: AppHandle) -> Value {
-    hooks::list_pending(&app, hooks::HookKind::Codex)
+fn ai_notes_list(app: AppHandle, source: Option<String>) -> Value {
+    notes_pool::list_pending(&app, source.as_deref())
 }
 
 #[tauri::command]
-fn codex_notes_delete(app: AppHandle, ids: Vec<String>) -> Value {
-    hooks::delete_pending(&app, hooks::HookKind::Codex, ids)
+fn ai_notes_delete(app: AppHandle, ids: Vec<String>) -> Value {
+    notes_pool::delete_pending(&app, ids)
 }
 
 #[tauri::command]
-fn codex_notes_write(
+fn ai_notes_write(
     app: AppHandle,
     ids: Vec<String>,
     project: Option<String>,
     content: Option<String>,
 ) -> Value {
-    hooks::write_pending(&app, hooks::HookKind::Codex, ids, project, content)
+    notes_pool::write_pending(&app, ids, project, content)
 }
 
 #[tauri::command]
-async fn codex_notes_summarize(app: AppHandle, ids: Vec<String>) -> Value {
-    hooks::summarize_pending(&app, hooks::HookKind::Codex, ids).await
+async fn ai_notes_summarize(app: AppHandle, ids: Vec<String>) -> Value {
+    notes_pool::summarize_pending(&app, ids).await
+}
+
+// ── 内置 MCP 服务 ──
+
+#[tauri::command]
+fn mcp_status(app: AppHandle, state: State<'_, AppState>) -> Value {
+    state.mcp.status_value(&app)
+}
+
+// ── 小记总结模型 ──
+
+#[tauri::command]
+async fn note_summary_test(app: AppHandle, cfg: Option<Value>, api_key: Option<String>) -> Value {
+    let use_cfg = cfg.unwrap_or_else(|| config::load_config(&app));
+    let key = match api_key {
+        Some(k) if !k.is_empty() => k,
+        _ => {
+            let resolved = secrets::resolve_note_summary_key(&use_cfg);
+            resolved.key
+        }
+    };
+    if key.is_empty() {
+        let provider = secrets::note_summary_provider(&use_cfg);
+        return json!({ "ok": false, "message": format!("未设置 {provider} 的 API Key，请先填写（或填主 AI 的 Key）") });
+    }
+    llm::test_note_summary_provider(&use_cfg, &key).await
+}
+
+// ── 一键集成（skill + MCP 注册，覆盖 codex/claude/zcode）──
+
+#[tauri::command]
+fn integration_status(app: AppHandle, state: State<'_, AppState>) -> Value {
+    integration::status(&app, &state.mcp)
 }
 
 #[tauri::command]
-fn codex_hook_status(app: AppHandle, state: State<'_, AppState>) -> Value {
-    hooks::hook_status(&app, &state.codex_hook, hooks::HookKind::Codex)
+fn integration_install(app: AppHandle, state: State<'_, AppState>, agents: Option<Vec<String>>) -> Value {
+    integration::install(&app, &state.mcp, agents.unwrap_or_default())
 }
 
 #[tauri::command]
-fn codex_hook_copy_config(app: AppHandle, state: State<'_, AppState>) -> Value {
-    hooks::copy_config(&app, &state.codex_hook, hooks::HookKind::Codex)
-}
-
-#[tauri::command]
-fn codex_hook_install(app: AppHandle, state: State<'_, AppState>) -> Value {
-    hooks::install_hook(&app, &state.codex_hook, hooks::HookKind::Codex)
-}
-
-#[tauri::command]
-fn codex_hook_uninstall(app: AppHandle) -> Value {
-    hooks::uninstall_hook(&app, hooks::HookKind::Codex)
-}
-
-#[tauri::command]
-fn zcode_notes_list(app: AppHandle) -> Value {
-    hooks::list_pending(&app, hooks::HookKind::Zcode)
-}
-
-#[tauri::command]
-fn zcode_notes_delete(app: AppHandle, ids: Vec<String>) -> Value {
-    hooks::delete_pending(&app, hooks::HookKind::Zcode, ids)
-}
-
-#[tauri::command]
-fn zcode_notes_write(
-    app: AppHandle,
-    ids: Vec<String>,
-    project: Option<String>,
-    content: Option<String>,
-) -> Value {
-    hooks::write_pending(&app, hooks::HookKind::Zcode, ids, project, content)
-}
-
-#[tauri::command]
-async fn zcode_notes_summarize(app: AppHandle, ids: Vec<String>) -> Value {
-    hooks::summarize_pending(&app, hooks::HookKind::Zcode, ids).await
-}
-
-#[tauri::command]
-fn zcode_hook_status(app: AppHandle, state: State<'_, AppState>) -> Value {
-    hooks::hook_status(&app, &state.zcode_hook, hooks::HookKind::Zcode)
-}
-
-#[tauri::command]
-fn zcode_hook_copy_config(app: AppHandle, state: State<'_, AppState>) -> Value {
-    hooks::copy_config(&app, &state.zcode_hook, hooks::HookKind::Zcode)
-}
-
-#[tauri::command]
-fn zcode_hook_install(app: AppHandle, state: State<'_, AppState>) -> Value {
-    hooks::install_hook(&app, &state.zcode_hook, hooks::HookKind::Zcode)
-}
-
-#[tauri::command]
-fn zcode_hook_uninstall(app: AppHandle) -> Value {
-    hooks::uninstall_hook(&app, hooks::HookKind::Zcode)
+fn integration_uninstall(app: AppHandle, agents: Option<Vec<String>>) -> Value {
+    integration::uninstall(&app, agents.unwrap_or_default())
 }
 
 // ── AI 对话（chat）──
@@ -1225,23 +1196,16 @@ pub fn run() {
             webdav_save_password,
             webdav_password_status,
             webdav_clear_password,
-            // Codex / ZCode hook
-            codex_notes_list,
-            codex_notes_delete,
-            codex_notes_write,
-            codex_notes_summarize,
-            codex_hook_status,
-            codex_hook_copy_config,
-            codex_hook_install,
-            codex_hook_uninstall,
-            zcode_notes_list,
-            zcode_notes_delete,
-            zcode_notes_write,
-            zcode_notes_summarize,
-            zcode_hook_status,
-            zcode_hook_copy_config,
-            zcode_hook_install,
-            zcode_hook_uninstall,
+            // AI 小记待处理池 / MCP / 一键集成 / 小记总结模型
+            ai_notes_list,
+            ai_notes_delete,
+            ai_notes_write,
+            ai_notes_summarize,
+            mcp_status,
+            note_summary_test,
+            integration_status,
+            integration_install,
+            integration_uninstall,
             // AI 对话
             chat_sessions,
             chat_session_get,
@@ -1323,11 +1287,10 @@ pub fn run() {
                 json!({ "platform": std::env::consts::OS }),
             );
 
-            // 启动 Codex / ZCode hook 本地服务（按已保存配置 enabled/port 启停）
+            // 启动内置 MCP HTTP 服务（按已保存配置 enabled/port 启停）
             {
                 let st = handle.state::<AppState>();
-                st.codex_hook.apply_config(&handle);
-                st.zcode_hook.apply_config(&handle);
+                st.mcp.apply_config(&handle);
             }
 
             // 启动后静默检查更新（仅打包/release 版本；dev 下 updates::check 自身会回 disabled）

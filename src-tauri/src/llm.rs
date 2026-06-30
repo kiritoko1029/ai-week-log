@@ -198,13 +198,17 @@ pub struct Provider {
     retries: u32,
 }
 
-/// 从配置构造 provider（对齐 llm/index.js createProvider）。
-pub fn create_provider(cfg: &Value, api_key: &str) -> Result<Provider, LlmError> {
-    let provider = cfg["ai"]["provider"].as_str().unwrap_or("anthropic");
-    let sub = &cfg["ai"][provider];
-    if sub.is_null() {
-        return Err(LlmError::Other(format!("未配置 provider：{provider}")));
-    }
+/// 按 provider 名 + 子配置构造 Provider（供主 AI 与「小记总结模型」复用）。
+fn build_provider(
+    provider: &str,
+    model: &str,
+    base_url: &str,
+    temperature: f64,
+    max_tokens: u64,
+    timeout_seconds: u64,
+    retries: u32,
+    api_key: &str,
+) -> Result<Provider, LlmError> {
     if api_key.is_empty() {
         return Err(LlmError::Other(format!("未设置 {provider} 的 API Key（请配置环境变量）")));
     }
@@ -213,11 +217,11 @@ pub fn create_provider(cfg: &Value, api_key: &str) -> Result<Provider, LlmError>
         "anthropic" => ProviderKind::Anthropic,
         other => return Err(LlmError::Other(format!("未知 provider：{other}"))),
     };
-    let raw_base = sub["baseUrl"].as_str().unwrap_or("").trim().to_string();
     let default_base = match kind {
         ProviderKind::OpenAI => "https://api.openai.com/v1",
         ProviderKind::Anthropic => "https://api.anthropic.com",
     };
+    let raw_base = base_url.trim();
     let base = if raw_base.is_empty() {
         default_base.to_string()
     } else {
@@ -228,12 +232,72 @@ pub fn create_provider(cfg: &Value, api_key: &str) -> Result<Provider, LlmError>
         client: reqwest::Client::new(),
         base,
         api_key: api_key.to_string(),
-        model: sub["model"].as_str().unwrap_or("").to_string(),
-        temperature: sub["temperature"].as_f64().unwrap_or(0.3),
-        max_tokens: sub["maxTokens"].as_u64().unwrap_or(800),
-        timeout_seconds: cfg["ai"]["timeoutSeconds"].as_u64().unwrap_or(60),
-        retries: cfg["ai"]["retries"].as_u64().unwrap_or(3) as u32,
+        model: model.to_string(),
+        temperature,
+        max_tokens,
+        timeout_seconds,
+        retries,
     })
+}
+
+/// 从配置构造主 AI provider（对齐 llm/index.js createProvider）。
+pub fn create_provider(cfg: &Value, api_key: &str) -> Result<Provider, LlmError> {
+    let provider = cfg["ai"]["provider"].as_str().unwrap_or("anthropic");
+    let sub = &cfg["ai"][provider];
+    if sub.is_null() {
+        return Err(LlmError::Other(format!("未配置 provider：{provider}")));
+    }
+    build_provider(
+        provider,
+        sub["model"].as_str().unwrap_or(""),
+        sub["baseUrl"].as_str().unwrap_or(""),
+        sub["temperature"].as_f64().unwrap_or(0.3),
+        sub["maxTokens"].as_u64().unwrap_or(800),
+        cfg["ai"]["timeoutSeconds"].as_u64().unwrap_or(60),
+        cfg["ai"]["retries"].as_u64().unwrap_or(3) as u32,
+        api_key,
+    )
+}
+
+/// 从 `cfg.noteSummary` 构造「小记总结模型」provider；未填字段回退主 AI 对应子配置。
+/// provider 取 noteSummary.provider（空则主 AI）；model/baseUrl 为空时回退主 AI 同 provider 的值。
+pub fn create_note_summary_provider(cfg: &Value, api_key: &str) -> Result<Provider, LlmError> {
+    let ns = &cfg["noteSummary"];
+    let provider = {
+        let p = ns["provider"].as_str().unwrap_or("").trim();
+        if p.is_empty() {
+            cfg["ai"]["provider"].as_str().unwrap_or("anthropic").to_string()
+        } else {
+            p.to_string()
+        }
+    };
+    let ai_sub = &cfg["ai"][&provider];
+    let model = {
+        let m = ns["model"].as_str().unwrap_or("").trim();
+        if m.is_empty() {
+            ai_sub["model"].as_str().unwrap_or("").to_string()
+        } else {
+            m.to_string()
+        }
+    };
+    let base_url = {
+        let b = ns["baseUrl"].as_str().unwrap_or("").trim();
+        if b.is_empty() {
+            ai_sub["baseUrl"].as_str().unwrap_or("").to_string()
+        } else {
+            b.to_string()
+        }
+    };
+    build_provider(
+        &provider,
+        &model,
+        &base_url,
+        ns["temperature"].as_f64().unwrap_or(0.3),
+        ns["maxTokens"].as_u64().unwrap_or(800),
+        cfg["ai"]["timeoutSeconds"].as_u64().unwrap_or(60),
+        cfg["ai"]["retries"].as_u64().unwrap_or(3) as u32,
+        api_key,
+    )
 }
 
 impl Provider {
@@ -643,6 +707,32 @@ pub async fn test_provider(cfg: &Value, api_key: &str) -> Value {
 
     let latency = |t0: u128| (utils::now_ms() - t0) as u64;
     match create_provider(&test_cfg, api_key) {
+        Ok(p) => match p.summarize("You are a connection test.", "Reply with: OK").await {
+            Ok(r) => {
+                let ms = latency(t0);
+                json!({
+                    "ok": true,
+                    "message": format!("连接成功 · {} · {}ms · 回复：{}", r.model, ms, snippet(&r.text, 40)),
+                    "model": r.model,
+                    "latencyMs": ms,
+                })
+            }
+            Err(e) => json!({ "ok": false, "message": e.message(), "latencyMs": latency(t0) }),
+        },
+        Err(e) => json!({ "ok": false, "message": e.message(), "latencyMs": latency(t0) }),
+    }
+}
+
+/// 测试「小记总结模型」连接（用 noteSummary 子配置构造 provider）。
+pub async fn test_note_summary_provider(cfg: &Value, api_key: &str) -> Value {
+    let t0 = utils::now_ms();
+    let mut test_cfg = cfg.clone();
+    test_cfg["ai"]["timeoutSeconds"] = json!(15);
+    test_cfg["ai"]["retries"] = json!(0);
+    test_cfg["noteSummary"]["maxTokens"] = json!(16);
+
+    let latency = |t0: u128| (utils::now_ms() - t0) as u64;
+    match create_note_summary_provider(&test_cfg, api_key) {
         Ok(p) => match p.summarize("You are a connection test.", "Reply with: OK").await {
             Ok(r) => {
                 let ms = latency(t0);

@@ -6,7 +6,7 @@
  *
  * 已接通：config、env、secrets、repo、notes（含 summarize/replaceSummarized）、report、
  *   prefs（含 extract）、ai.test、collect、generate、history、dialog、logs、tasks、ui、
- *   shortcut、quicknote、shell、webdav.*、localBackup、codexNotes.*、zcodeNotes.*。
+ *   shortcut、quicknote、shell、webdav.*、localBackup、aiNotes.*、mcp.status、integration.*、noteSummary.test。
  * 已接通（续）：chat.*（SSE 流式问答 + 报告意图 + 会话存储，事件 chat:stream）、
  *   memory.*（索引/检索/队列/状态/重建/推断；API 嵌入 + 关键词预筛，本地 ONNX 嵌入待 ort 集成）、
  *   updates.*（手动 GitHub 更新器：查版本/下载/打开安装包，事件 updates:update）。
@@ -18,19 +18,19 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-shell'
 import type {
   AppLogEntry,
+  AiPendingNote,
   BackgroundTask,
   ChatSession,
   ChatSessionMeta,
   ChatStreamPayload,
   CollectResult,
   Config,
-  CodexHookCopyConfigResult,
-  CodexHookInstallResult,
-  CodexHookStatus,
-  CodexPendingNote,
   GenerateProgress,
   HistoryEntry,
+  IntegrationResult,
+  IntegrationStatus,
   LocalBackupResult,
+  McpStatus,
   MemoryIndexItem,
   MemoryInferResult,
   MemoryQueueStatus,
@@ -53,10 +53,6 @@ import type {
   WebdavTestResult,
   WeeklogAPI,
   WritingPreference,
-  ZcodeHookCopyConfigResult,
-  ZcodeHookInstallResult,
-  ZcodeHookStatus,
-  ZcodePendingNote,
   AiTestResult,
 } from '@/types/weeklog'
 
@@ -122,43 +118,31 @@ export const api: WeeklogAPI = {
   report: {
     convert: (q) => invoke<{ text: string }>('report_convert', { q }),
   },
-  codexNotes: {
-    list: () => invoke<CodexPendingNote[]>('codex_notes_list'),
-    delete: (ids) => invoke<{ deleted: number }>('codex_notes_delete', { ids }),
+  aiNotes: {
+    list: (source) => invoke<AiPendingNote[]>('ai_notes_list', { source }),
+    delete: (ids) => invoke<{ deleted: number }>('ai_notes_delete', { ids }),
     write: (q) =>
-      invoke<{ written: number; files: string[] }>('codex_notes_write', {
+      invoke<{ written: number; files: string[] }>('ai_notes_write', {
         ids: q.ids,
         project: q.project,
         content: q.content,
       }),
     summarize: (ids) =>
       invoke<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>(
-        'codex_notes_summarize',
+        'ai_notes_summarize',
         { ids },
       ),
-    status: () => invoke<CodexHookStatus>('codex_hook_status'),
-    copyConfig: () => invoke<CodexHookCopyConfigResult>('codex_hook_copy_config'),
-    installHook: () => invoke<CodexHookInstallResult>('codex_hook_install'),
-    uninstallHook: () => invoke<CodexHookInstallResult>('codex_hook_uninstall'),
   },
-  zcodeNotes: {
-    list: () => invoke<ZcodePendingNote[]>('zcode_notes_list'),
-    delete: (ids) => invoke<{ deleted: number }>('zcode_notes_delete', { ids }),
-    write: (q) =>
-      invoke<{ written: number; files: string[] }>('zcode_notes_write', {
-        ids: q.ids,
-        project: q.project,
-        content: q.content,
-      }),
-    summarize: (ids) =>
-      invoke<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>(
-        'zcode_notes_summarize',
-        { ids },
-      ),
-    status: () => invoke<ZcodeHookStatus>('zcode_hook_status'),
-    copyConfig: () => invoke<ZcodeHookCopyConfigResult>('zcode_hook_copy_config'),
-    installHook: () => invoke<ZcodeHookInstallResult>('zcode_hook_install'),
-    uninstallHook: () => invoke<ZcodeHookInstallResult>('zcode_hook_uninstall'),
+  mcp: {
+    status: () => invoke<McpStatus>('mcp_status'),
+  },
+  integration: {
+    status: () => invoke<IntegrationStatus>('integration_status'),
+    install: (agents) => invoke<IntegrationResult>('integration_install', { agents }),
+    uninstall: (agents) => invoke<IntegrationResult>('integration_uninstall', { agents }),
+  },
+  noteSummary: {
+    test: (cfg, apiKey) => invoke<AiTestResult>('note_summary_test', { cfg, apiKey }),
   },
   collect: (q) => invoke<CollectResult>('collect', { rangeOpts: q.rangeOpts, options: q.options }),
   generate: (q) => invoke<Report>('generate', { rangeOpts: q.rangeOpts, options: q.options }),

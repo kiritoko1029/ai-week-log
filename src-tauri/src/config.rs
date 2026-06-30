@@ -23,8 +23,16 @@ pub fn default_config() -> Value {
         "repos": [],
         "filters": { "author": [], "mergeCommits": "exclude", "excludeGrep": [] },
         "notes": { "enabled": true, "miscProject": "日常工作" },
-        "codexHook": { "enabled": false, "port": 17321 },
-        "zcodeHook": { "enabled": false, "port": 17322 },
+        "mcp": { "enabled": true, "port": 17300 },
+        "noteSummary": {
+            "enabled": true,
+            "provider": "anthropic",
+            "model": "",
+            "baseUrl": "",
+            "temperature": 0.3,
+            "maxTokens": 800,
+            "triggerMinChars": 80
+        },
         "ui": { "theme": "auto", "quickNoteShortcut": "CommandOrControl+Shift+L" },
         "ai": {
             "provider": "anthropic",

@@ -10,6 +10,7 @@
 - **双信息源融合**：commit（代码工作）+ 笔记（非代码工作）一并送 AI，按「日期 → 项目」两级组织，每段 3–5 句。
 - **双 LLM 后端**：OpenAI Responses API / Anthropic Messages API，配置一行切换，内置连接测试。
 - **AI 记忆系统**：本地向量嵌入（Transformers.js + ONNX）+ 语义检索，跨周报累积上下文，写笔记时自动推断相关项目。
+- **AI 小记（Skill + MCP）**：为 Codex / Claude Code / ZCode 一键安装 skill 并注册本地 MCP 服务；对话收尾时把「用户提问 + AI 回复」回传 WeekLog，由可配置的「小记总结模型」总结成中文小记，进入待处理池，人工确认后写入笔记。
 - **WebDAV 云同步**：笔记 / 配置 / 历史记录多端同步，自动去重 + 冲突告警。
 - **跨平台桌面应用**：macOS（Apple Silicon / arm64）+ Windows（x64）。
 - **本地优先**：仅在调用 LLM 时产生网络请求；笔记、配置、记忆均存本地。
@@ -40,6 +41,7 @@
 | AI 与输出设置 | provider 切换、模型 / baseUrl / temperature、**连接测试**、笔记目录、输出格式、并发与容错 |
 | WebDAV 同步 | 双向同步（pull / push / both）、状态面板、密码加密存储 |
 | AI 记忆 | 本地向量库、跨报告累积、语义检索注入、可查看 / 重建 / 删除 |
+| AI 小记 | 一键为 Codex / Claude Code / ZCode 安装 skill + 注册本地 MCP 服务；对话收尾自动总结成小记进待处理池，人工确认后写入笔记 |
 | 快速记笔记 | 全局快捷键唤出浮窗（默认 `Cmd/Ctrl+Shift+L`），随时记，自动归类项目 |
 
 ---

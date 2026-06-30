@@ -270,8 +270,7 @@ export function NotesPage() {
       <Tabs defaultValue="quick">
         <TabsListUnderline>
           <TabsTriggerUnderline value="quick">快速添加</TabsTriggerUnderline>
-          <TabsTriggerUnderline value="codex-pending">Codex 待处理</TabsTriggerUnderline>
-          <TabsTriggerUnderline value="zcode-pending">ZCode 待处理</TabsTriggerUnderline>
+          <TabsTriggerUnderline value="ai-pending">AI 小记待处理</TabsTriggerUnderline>
           <TabsTriggerUnderline value="timeline">笔记时间线</TabsTriggerUnderline>
           <TabsTriggerUnderline value="raw">原始格式</TabsTriggerUnderline>
         </TabsListUnderline>
@@ -351,24 +350,13 @@ export function NotesPage() {
       </Card>
         </TabsContent>
 
-        <TabsContent value="codex-pending" className="space-y-6 pt-6">
-      {/* Codex hook 待处理小记池 */}
+        <TabsContent value="ai-pending" className="space-y-6 pt-6">
+      {/* AI 小记统一待处理池（codex / claude / zcode 经 Skill+MCP 提交） */}
       <PendingNotePool
-        title="Codex Hook 待处理小记池"
-        sourceName="Codex"
+        title="AI 小记待处理池"
+        sourceName="AI"
         miscProject={miscProject}
-        api={api.codexNotes}
-        onWritten={() => { loadNotes(); refreshRaw(todayISO()) }}
-      />
-        </TabsContent>
-
-        <TabsContent value="zcode-pending" className="space-y-6 pt-6">
-      {/* ZCode hook 待处理小记池 */}
-      <PendingNotePool
-        title="ZCode Hook 待处理小记池"
-        sourceName="ZCode"
-        miscProject={miscProject}
-        api={api.zcodeNotes}
+        api={api.aiNotes}
         onWritten={() => { loadNotes(); refreshRaw(todayISO()) }}
       />
         </TabsContent>

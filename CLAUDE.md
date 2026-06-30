@@ -75,7 +75,13 @@ collectRepo (git.js)  →  loadNotes (notes.js)  →  aggregate (aggregator.js) 
 - **WebDAV** `webdav.js`：双向同步（pull/push/both）、去重、冲突告警。**启动自动拉取、退出自动推送**（见 `index.js` 的 `triggerAutoSync`，退出推送有 8s 超时保护）。
 - **自动更新** `updater.js`：基于 `electron-updater`（GitHub provider，仓库 `kiritoko1029/ai-week-log`）。
 
-> ⚠️ 以上「架构总览」描述的是**旧 Electron 主进程**（`src/main/`）。当前生效的外壳是 **Tauri 2**，后端在 `src-tauri/src/`，模块拆分与 `src/main/` 一一对应（如 `updates.rs` 对 `updater.js`——Tauri 版改为**手动 GitHub 流程**，不再用 `electron-updater`）。新功能请改 `src-tauri/src/`。
+- **AI 小记（Skill + MCP，仅 Tauri 后端）** `src-tauri/src/`：取代旧的 Codex/ZCode hook 子系统。
+  - `mcp.rs`：内置 MCP HTTP 服务（`rmcp` `StreamableHttpService` 挂 `axum`，仅绑 `127.0.0.1:{mcp.port}`，Bearer token 校验，token 存钥匙串 provider `weeklogMcp`）。暴露 `submit_conversation` 工具：收到 agent 经 skill 发来的「已清洗对话」（仅 user+assistant）→ 用「小记总结模型」（`cfg.noteSummary`）总结成一条中文小记 → 入统一待处理池。按 `cfg.mcp.enabled/port` 启停。
+  - `notes_pool.rs`：统一待处理池 `ai-notes-pending.json`（item 带 `source`），含 `list/delete/write/summarize` 与 `match_project` 归类、`sanitize_summary` 清洗。人工在前端确认后才写入 `notes/YYYY-MM-DD.md`。
+  - `integration.rs`：一键 `install/uninstall/status`，对 codex/claude/zcode 依次「清旧 hook 工件 → 写 skill（注入 `weeklog.json` 的 endpoint+token）→ 注册 MCP 到各 agent 配置（codex `config.toml` / claude `~/.claude.json` / zcode `config.json`，写前备份）」。
+  - 内置 skill 打包在 `src-tauri/resources/skill/`（`SKILL.md` + 零依赖的 `record-note.mjs`：定位/解析 transcript、抽取 user+assistant 文本去思考/工具、手写最小 MCP 客户端调 `submit_conversation`）。
+
+> ⚠️ 以上「架构总览」描述的是**旧 Electron 主进程**（`src/main/`）。当前生效的外壳是 **Tauri 2**，后端在 `src-tauri/src/`，模块拆分与 `src/main/` 一一对应（如 `updates.rs` 对 `updater.js`——Tauri 版改为**手动 GitHub 流程**，不再用 `electron-updater`；AI 小记改为上面的 `mcp.rs`/`notes_pool.rs`/`integration.rs`，不再用 hook）。新功能请改 `src-tauri/src/`。
 
 ### 主进程窗口/生命周期（`index.js`）
 

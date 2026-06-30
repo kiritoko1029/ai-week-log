@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { RefreshCw, Loader2, Trash2, WandSparkles, CheckCheck, Inbox, GitBranch, Clock3, FolderGit2, Files, ChevronDown, ChevronUp, Plus } from 'lucide-react'
+import { RefreshCw, Loader2, Trash2, WandSparkles, CheckCheck, Inbox, GitBranch, Clock3, FolderGit2, Files, ChevronDown, ChevronUp, Plus, Bot } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -7,16 +7,27 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import type { CodexPendingNote } from '@/types/weeklog'
+import type { AiPendingNote } from '@/types/weeklog'
 
-/** 共用形状：Codex 与 ZCode 的 pending note 字段一致，仅 source 取值不同 */
-type PendingItem = Omit<CodexPendingNote, 'source'> & { source: 'codex' | 'zcode' }
+/** 统一池中的一条待处理小记（含 source，前端按来源显示徽标） */
+type PendingItem = AiPendingNote
 
 interface PendingPoolApi {
   list: () => Promise<PendingItem[]>
   delete: (ids: string[]) => Promise<{ deleted: number }>
   write: (q: { ids: string[]; project?: string; content?: string }) => Promise<{ written: number; files: string[] }>
   summarize: (ids: string[]) => Promise<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>
+}
+
+/** 来源 agent → 展示名（与后端 source_label 对齐） */
+const SOURCE_LABELS: Record<string, string> = {
+  codex: 'Codex',
+  claude: 'Claude Code',
+  zcode: 'ZCode',
+}
+
+function sourceLabel(source: string) {
+  return SOURCE_LABELS[source] || source || 'AI'
 }
 
 function formatPendingNoteTime(value: string) {
@@ -260,6 +271,10 @@ export function PendingNotePool({ title, sourceName, miscProject, api, onWritten
                   />
                   <div className="min-w-0 flex-1 space-y-3">
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <Badge variant="outline" className="gap-1">
+                        <Bot className="size-3" />
+                        {sourceLabel(item.source)}
+                      </Badge>
                       <Badge variant="secondary" className="gap-1">
                         <FolderGit2 className="size-3" />
                         {item.project || miscProject}

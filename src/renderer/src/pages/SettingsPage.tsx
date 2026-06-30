@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity, ArchiveRestore, Copy, Globe } from 'lucide-react'
+import { Eye, EyeOff, FolderOpen, Save, Trash2, Cloud, Brain, RefreshCw, Zap, Database, Download, RotateCw, Loader2, CheckCircle2, AlertCircle, Cpu, Activity, ArchiveRestore, Globe, Bot, PlugZap } from 'lucide-react'
 import { ProviderBadge } from '@/components/BrandIcons'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
@@ -18,7 +18,13 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Tabs, TabsListUnderline, TabsTriggerUnderline, TabsContent } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
-import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus, WebdavBackupInfo, CodexHookStatus, ZcodeHookStatus, WritingPreference } from '@/types/weeklog'
+import type { Config, MemoryIndexItem, MemoryStatus, WebdavStatus, MemoryQueueStatus, UpdateStatus, WebdavBackupInfo, McpStatus, IntegrationStatus, NoteSummaryConfig, WritingPreference } from '@/types/weeklog'
+
+const AGENT_OPTIONS: { id: string; label: string }[] = [
+  { id: 'codex', label: 'Codex' },
+  { id: 'claude', label: 'Claude Code' },
+  { id: 'zcode', label: 'ZCode' },
+]
 
 export function SettingsPage() {
   const { config, save, refresh: refreshConfig } = useConfig()
@@ -82,14 +88,14 @@ export function SettingsPage() {
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [downloadingUpdate, setDownloadingUpdate] = useState(false)
   const [creatingLocalBackup, setCreatingLocalBackup] = useState(false)
-  const [codexHookStatus, setCodexHookStatus] = useState<CodexHookStatus | null>(null)
-  const [copyingCodexHookConfig, setCopyingCodexHookConfig] = useState(false)
-  const [installingCodexHook, setInstallingCodexHook] = useState(false)
-  const [uninstallingCodexHook, setUninstallingCodexHook] = useState(false)
-  const [zcodeHookStatus, setZcodeHookStatus] = useState<ZcodeHookStatus | null>(null)
-  const [copyingZcodeHookConfig, setCopyingZcodeHookConfig] = useState(false)
-  const [installingZcodeHook, setInstallingZcodeHook] = useState(false)
-  const [uninstallingZcodeHook, setUninstallingZcodeHook] = useState(false)
+
+  // AI 小记（Skill + MCP）：MCP 服务状态 + 一键集成
+  const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null)
+  const [integrationStatus, setIntegrationStatus] = useState<IntegrationStatus | null>(null)
+  const [selectedAgents, setSelectedAgents] = useState<string[]>(['codex', 'claude', 'zcode'])
+  const [installingAgents, setInstallingAgents] = useState(false)
+  const [uninstallingAgents, setUninstallingAgents] = useState(false)
+  const [testingNoteSummary, setTestingNoteSummary] = useState(false)
 
   const recorder = useShortcutRecorder(config?.ui?.quickNoteShortcut || 'CommandOrControl+Shift+L')
 
@@ -146,18 +152,16 @@ export function SettingsPage() {
     return off
   }, [])
 
-  const refreshCodexHookStatus = useCallback(() => {
-    api.codexNotes.status().then(setCodexHookStatus).catch(() => {})
-  }, [])
-
-  const refreshZcodeHookStatus = useCallback(() => {
-    api.zcodeNotes.status().then(setZcodeHookStatus).catch(() => {})
+  const refreshIntegrationStatus = useCallback(() => {
+    api.integration.status().then((s) => {
+      setIntegrationStatus(s)
+      setMcpStatus(s.mcp)
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
-    refreshCodexHookStatus()
-    refreshZcodeHookStatus()
-  }, [refreshCodexHookStatus, refreshZcodeHookStatus])
+    refreshIntegrationStatus()
+  }, [refreshIntegrationStatus])
 
   const patch = useCallback((updater: (c: Config) => void) => {
     setDraft((prev) => {
@@ -234,11 +238,10 @@ export function SettingsPage() {
     }
     await save(draft)
     const sr = await api.shortcut.apply()
-    refreshCodexHookStatus()
-    refreshZcodeHookStatus()
+    refreshIntegrationStatus()
     if (sr && !sr.ok) toast.warning('快捷键可能被占用，已回退默认')
     else toast.success('设置已保存')
-  }, [draft, apiKey, webdavPassword, recorder.accel, save, refreshCodexHookStatus, refreshZcodeHookStatus])
+  }, [draft, apiKey, webdavPassword, recorder.accel, save, refreshIntegrationStatus])
 
   // WebDAV：测试连接
   const testWebdav = useCallback(async () => {
@@ -452,121 +455,69 @@ export function SettingsPage() {
     }
   }, [draft, save])
 
-  const copyCodexHookConfig = useCallback(async () => {
-    if (!draft) return
-    setCopyingCodexHookConfig(true)
-    try {
-      await save(draft)
-      const r = await api.codexNotes.copyConfig()
-      await navigator.clipboard.writeText(r.text)
-      refreshCodexHookStatus()
-      toast.success('Codex hook 配置片段已复制')
-    } catch (e: any) {
-      toast.error('复制失败', { description: e?.message || '未知错误' })
-    } finally {
-      setCopyingCodexHookConfig(false)
-    }
-  }, [draft, save, refreshCodexHookStatus])
+  const toggleAgent = useCallback((agent: string) => {
+    setSelectedAgents((prev) => (prev.includes(agent) ? prev.filter((a) => a !== agent) : [...prev, agent]))
+  }, [])
 
-  const installCodexHook = useCallback(async () => {
+  const testNoteSummary = useCallback(async () => {
     if (!draft) return
-    setInstallingCodexHook(true)
+    setTestingNoteSummary(true)
+    try {
+      const r = await api.noteSummary.test(draft, apiKey.trim() || undefined)
+      if (r.ok) toast.success('小记总结模型连接成功', { description: r.message })
+      else toast.error('连接失败', { description: r.message })
+    } catch (e: any) {
+      toast.error('连接失败', { description: e?.message || '未知错误' })
+    } finally {
+      setTestingNoteSummary(false)
+    }
+  }, [draft, apiKey])
+
+  const installIntegration = useCallback(async () => {
+    if (!draft) return
+    if (!selectedAgents.length) {
+      toast.warning('请先勾选要安装的 agent')
+      return
+    }
+    setInstallingAgents(true)
     try {
       await save(draft)
-      const r = await api.codexNotes.installHook()
+      const r = await api.integration.install(selectedAgents)
       const nextCfg = await refreshConfig()
       setDraft(structuredClone(nextCfg))
-      refreshCodexHookStatus()
+      refreshIntegrationStatus()
       if (r.ok) {
-        toast.success('Codex Hook 已安装', {
-          description: r.backupPath ? `已备份原 hooks.json：${r.backupPath}` : r.hooksPath,
-        })
+        toast.success('AI 小记集成已安装', { description: `已配置 skill + MCP：${selectedAgents.join('、')}` })
       } else {
-        toast.error('安装失败', { description: r.error || '未知错误' })
+        toast.error('部分 agent 安装失败', { description: r.error || '请展开各 agent 状态或查看日志' })
       }
     } catch (e: any) {
       toast.error('安装失败', { description: e?.message || '未知错误' })
     } finally {
-      setInstallingCodexHook(false)
+      setInstallingAgents(false)
     }
-  }, [draft, save, refreshConfig, refreshCodexHookStatus])
+  }, [draft, save, refreshConfig, refreshIntegrationStatus, selectedAgents])
 
-  const uninstallCodexHook = useCallback(async () => {
-    setUninstallingCodexHook(true)
+  const uninstallIntegration = useCallback(async () => {
+    if (!selectedAgents.length) {
+      toast.warning('请先勾选要卸载的 agent')
+      return
+    }
+    setUninstallingAgents(true)
     try {
-      const r = await api.codexNotes.uninstallHook()
-      refreshCodexHookStatus()
+      const r = await api.integration.uninstall(selectedAgents)
+      refreshIntegrationStatus()
       if (r.ok) {
-        toast.success(r.removed ? 'Codex Hook 已卸载' : '未发现 WeekLog 管理的 Hook', {
-          description: r.backupPath ? `已备份原 hooks.json：${r.backupPath}` : r.hooksPath,
-        })
+        toast.success('AI 小记集成已卸载', { description: `已处理：${selectedAgents.join('、')}` })
       } else {
-        toast.error('卸载失败', { description: r.error || '未知错误' })
+        toast.error('部分 agent 卸载失败', { description: r.error || '请查看日志' })
       }
     } catch (e: any) {
       toast.error('卸载失败', { description: e?.message || '未知错误' })
     } finally {
-      setUninstallingCodexHook(false)
+      setUninstallingAgents(false)
     }
-  }, [refreshCodexHookStatus])
-
-  const copyZcodeHookConfig = useCallback(async () => {
-    if (!draft) return
-    setCopyingZcodeHookConfig(true)
-    try {
-      await save(draft)
-      const r = await api.zcodeNotes.copyConfig()
-      await navigator.clipboard.writeText(r.text)
-      refreshZcodeHookStatus()
-      toast.success('ZCode hook 配置片段已复制')
-    } catch (e: any) {
-      toast.error('复制失败', { description: e?.message || '未知错误' })
-    } finally {
-      setCopyingZcodeHookConfig(false)
-    }
-  }, [draft, save, refreshZcodeHookStatus])
-
-  const installZcodeHook = useCallback(async () => {
-    if (!draft) return
-    setInstallingZcodeHook(true)
-    try {
-      await save(draft)
-      const r = await api.zcodeNotes.installHook()
-      const nextCfg = await refreshConfig()
-      setDraft(structuredClone(nextCfg))
-      refreshZcodeHookStatus()
-      if (r.ok) {
-        toast.success('ZCode Hook 已安装', {
-          description: r.pluginPath,
-        })
-      } else {
-        toast.error('安装失败', { description: r.error || '未知错误' })
-      }
-    } catch (e: any) {
-      toast.error('安装失败', { description: e?.message || '未知错误' })
-    } finally {
-      setInstallingZcodeHook(false)
-    }
-  }, [draft, save, refreshConfig, refreshZcodeHookStatus])
-
-  const uninstallZcodeHook = useCallback(async () => {
-    setUninstallingZcodeHook(true)
-    try {
-      const r = await api.zcodeNotes.uninstallHook()
-      refreshZcodeHookStatus()
-      if (r.ok) {
-        toast.success(r.removed ? 'ZCode Hook 已卸载' : '未发现 WeekLog 管理的 ZCode 插件', {
-          description: r.backups && r.backups.length ? `已备份：${r.backups.join('、')}` : r.pluginPath,
-        })
-      } else {
-        toast.error('卸载失败', { description: r.error || '未知错误' })
-      }
-    } catch (e: any) {
-      toast.error('卸载失败', { description: e?.message || '未知错误' })
-    } finally {
-      setUninstallingZcodeHook(false)
-    }
-  }, [refreshZcodeHookStatus])
+  }, [refreshIntegrationStatus, selectedAgents])
 
   if (!draft) {
     return <div className="py-8 text-center text-sm text-muted-foreground">加载配置中…</div>
@@ -725,180 +676,187 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Hook 小记（Codex / ZCode） */}
+      {/* AI 小记（Skill + MCP） */}
       <Card className="border-l-4 border-l-fuchsia-500">
-        <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>Hook 小记</CardTitle>
-          <Badge variant={(codexHookStatus?.running || zcodeHookStatus?.running) ? 'success' : (draft.codexHook.enabled || draft.zcodeHook.enabled) ? 'destructive' : 'secondary'}>
-            {(codexHookStatus?.running || zcodeHookStatus?.running) ? '运行中' : (draft.codexHook.enabled || draft.zcodeHook.enabled) ? '未运行' : '未启用'}
+        <CardHeader className="flex-row items-start justify-between gap-3">
+          <div className="space-y-1">
+            <CardTitle>AI 小记（Skill + MCP）</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              在 Codex / Claude Code / ZCode 中安装 weeklog-ai-note skill；对话收尾时把清洗后的对话经 MCP 发回 WeekLog，由“小记总结模型”总结成一条中文小记并进入待处理池，确认后写入正式笔记。
+            </p>
+          </div>
+          <Badge variant={mcpStatus?.running ? 'success' : draft.mcp.enabled ? 'destructive' : 'secondary'}>
+            {mcpStatus?.running ? 'MCP 运行中' : draft.mcp.enabled ? 'MCP 未运行' : 'MCP 未启用'}
           </Badge>
         </CardHeader>
         <CardContent className="space-y-5">
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold">允许写入待处理小记池（可多选）</h4>
-            <p className="text-xs text-muted-foreground">开启后只接受本机 loopback + token 请求，内容先进入待处理池，确认后再写入正式笔记。</p>
+          {/* 本地 MCP 服务 */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <h4 className="flex items-center gap-2 text-sm font-semibold"><PlugZap className="size-4" />本地 MCP 服务</h4>
+                <p className="text-xs text-muted-foreground">仅监听 127.0.0.1 回环地址，使用 Bearer token 校验；各 agent 通过此地址回传对话。</p>
+              </div>
+              <Switch checked={draft.mcp.enabled} onCheckedChange={(v) => patch((c) => { c.mcp.enabled = v })} />
+            </div>
+            <div className="flex flex-wrap gap-4">
+              <div className="min-w-[120px] space-y-1.5">
+                <Label>本地端口</Label>
+                <Input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={draft.mcp.port}
+                  onChange={(e) => patch((c) => { c.mcp.port = Number(e.target.value) || 17300 })}
+                />
+              </div>
+              <div className="min-w-[260px] flex-1 space-y-1.5">
+                <Label>接口地址</Label>
+                <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
+                  {mcpStatus?.endpoint || `http://127.0.0.1:${draft.mcp.port}/mcp`}
+                </p>
+              </div>
+            </div>
+            {mcpStatus?.error && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+                {mcpStatus.error}
+              </div>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* 小记总结模型 */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <h4 className="flex items-center gap-2 text-sm font-semibold"><Brain className="size-4" />小记总结模型</h4>
+                <p className="text-xs text-muted-foreground">把对话总结成一条中文小记。留空字段回退主 AI 配置；可在“API Key”区单独设置 noteSummary 密钥。</p>
+              </div>
+              <Switch checked={draft.noteSummary.enabled} onCheckedChange={(v) => patch((c) => { c.noteSummary.enabled = v })} />
+            </div>
+            <div className="flex flex-wrap gap-4">
+              <div className="min-w-[160px] space-y-1.5">
+                <Label>提供商</Label>
+                <Select
+                  value={draft.noteSummary.provider || 'inherit'}
+                  onValueChange={(v) => patch((c) => { c.noteSummary.provider = v === 'inherit' ? '' : (v as NoteSummaryConfig['provider']) })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">跟随主 AI</SelectItem>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                    <SelectItem value="anthropic">Anthropic</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="min-w-[200px] flex-1 space-y-1.5">
+                <Label>模型</Label>
+                <Input
+                  value={draft.noteSummary.model}
+                  placeholder="留空回退主 AI 模型"
+                  onChange={(e) => patch((c) => { c.noteSummary.model = e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Base URL（可选）</Label>
+              <Input
+                value={draft.noteSummary.baseUrl}
+                placeholder="留空使用默认 / 主 AI 地址"
+                onChange={(e) => patch((c) => { c.noteSummary.baseUrl = e.target.value })}
+              />
+            </div>
+            <div className="flex flex-wrap gap-4">
+              <div className="min-w-[120px] space-y-1.5">
+                <Label>温度</Label>
+                <Input
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  max={2}
+                  value={draft.noteSummary.temperature}
+                  onChange={(e) => patch((c) => { c.noteSummary.temperature = Number(e.target.value) })}
+                />
+              </div>
+              <div className="min-w-[120px] space-y-1.5">
+                <Label>最大 token</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={draft.noteSummary.maxTokens}
+                  onChange={(e) => patch((c) => { c.noteSummary.maxTokens = Number(e.target.value) || 800 })}
+                />
+              </div>
+              <div className="min-w-[160px] space-y-1.5">
+                <Label>触发最小字符数</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={draft.noteSummary.triggerMinChars}
+                  onChange={(e) => patch((c) => { c.noteSummary.triggerMinChars = Number(e.target.value) || 0 })}
+                />
+              </div>
+            </div>
+            <div>
+              <Button type="button" variant="outline" onClick={testNoteSummary} disabled={testingNoteSummary}>
+                {testingNoteSummary ? <RefreshCw className="animate-spin" /> : <Zap />}
+                测试连接
+              </Button>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* 一键安装到 AI Agent */}
+          <div className="space-y-3">
+            <div className="space-y-0.5">
+              <h4 className="flex items-center gap-2 text-sm font-semibold"><Bot className="size-4" />一键安装到 AI Agent</h4>
+              <p className="text-xs text-muted-foreground">写入 skill 并在所选 agent 中注册 WeekLog MCP 服务；安装会自动清理旧版 hook 工件（修改前已备份原配置）。</p>
+            </div>
             <div className="flex flex-wrap items-center gap-6 pt-1">
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="size-4 accent-violet-600"
-                  checked={draft.codexHook.enabled}
-                  onChange={(e) => patch((c) => { c.codexHook.enabled = e.target.checked })}
-                />
-                Codex
-              </label>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="size-4 accent-violet-600"
-                  checked={draft.zcodeHook.enabled}
-                  onChange={(e) => patch((c) => { c.zcodeHook.enabled = e.target.checked })}
-                />
-                ZCode
-              </label>
+              {AGENT_OPTIONS.map((a) => {
+                const st = integrationStatus?.agents?.[a.id]
+                return (
+                  <label key={a.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-violet-600"
+                      checked={selectedAgents.includes(a.id)}
+                      onChange={() => toggleAgent(a.id)}
+                    />
+                    {a.label}
+                    {st?.skillInstalled && st?.mcpRegistered ? (
+                      <Badge variant="success">已安装</Badge>
+                    ) : st?.skillInstalled || st?.mcpRegistered ? (
+                      <Badge variant="secondary">部分</Badge>
+                    ) : st?.present ? (
+                      <Badge variant="secondary">未安装</Badge>
+                    ) : (
+                      <Badge variant="outline">未检测到</Badge>
+                    )}
+                  </label>
+                )
+              })}
             </div>
-          </div>
-
-          <Separator />
-
-          {/* Codex 区 */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm font-semibold">Codex</h4>
-              <Badge variant={codexHookStatus?.hookInstalled ? 'success' : 'secondary'}>
-                {codexHookStatus?.hookInstalled ? `Hook 已安装${codexHookStatus.hookCount > 1 ? ` × ${codexHookStatus.hookCount}` : ''}` : 'Hook 未安装'}
-              </Badge>
-            </div>
-            <div className="flex flex-wrap gap-4">
-              <div className="min-w-[120px] space-y-1.5">
-                <Label>本地端口</Label>
-                <Input
-                  type="number"
-                  min={1024}
-                  max={65535}
-                  value={draft.codexHook.port}
-                  onChange={(e) => patch((c) => { c.codexHook.port = Number(e.target.value) || 17321 })}
-                />
-              </div>
-              <div className="min-w-[260px] flex-1 space-y-1.5">
-                <Label>接口地址</Label>
-                <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-                  {codexHookStatus?.endpoint || `http://127.0.0.1:${draft.codexHook.port}/api/codex/pending-notes`}
-                </p>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>配置文件</Label>
-              <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-                {codexHookStatus?.hooksPath || '~/.codex/hooks.json'}
-              </p>
-            </div>
-            {codexHookStatus?.error && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-                {codexHookStatus.error}
-              </div>
-            )}
-            {codexHookStatus?.hookError && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-                {codexHookStatus.hookError}
-              </div>
-            )}
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" onClick={installCodexHook} disabled={installingCodexHook || !draft.codexHook.enabled}>
-                {installingCodexHook ? <RefreshCw className="animate-spin" /> : <Zap />}
-                一键安装 Hook
+              <Button type="button" onClick={installIntegration} disabled={installingAgents || !selectedAgents.length}>
+                {installingAgents ? <RefreshCw className="animate-spin" /> : <Zap />}
+                一键安装
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={uninstallCodexHook}
-                disabled={uninstallingCodexHook || !codexHookStatus?.hookInstalled}
-              >
-                {uninstallingCodexHook ? <RefreshCw className="animate-spin" /> : <Trash2 />}
+              <Button type="button" variant="outline" onClick={uninstallIntegration} disabled={uninstallingAgents || !selectedAgents.length}>
+                {uninstallingAgents ? <RefreshCw className="animate-spin" /> : <Trash2 />}
                 卸载
               </Button>
-              <Button type="button" variant="outline" onClick={copyCodexHookConfig} disabled={!draft.codexHook.enabled || copyingCodexHookConfig}>
-                {copyingCodexHookConfig ? <RefreshCw className="animate-spin" /> : <Copy />}
-                复制配置片段
+              <Button type="button" variant="ghost" onClick={refreshIntegrationStatus}>
+                <RefreshCw />
+                刷新状态
               </Button>
             </div>
           </div>
 
-          <Separator />
-
-          {/* ZCode 区 */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm font-semibold">ZCode</h4>
-              <Badge variant={zcodeHookStatus?.hookInstalled && zcodeHookStatus?.hookEnabled ? 'success' : zcodeHookStatus?.hookInstalled ? 'secondary' : 'secondary'}>
-                {zcodeHookStatus?.hookInstalled ? (zcodeHookStatus.hookEnabled ? '插件已安装并启用' : '插件已安装未启用') : '插件未安装'}
-              </Badge>
-            </div>
-            <div className="flex flex-wrap gap-4">
-              <div className="min-w-[120px] space-y-1.5">
-                <Label>本地端口</Label>
-                <Input
-                  type="number"
-                  min={1024}
-                  max={65535}
-                  value={draft.zcodeHook.port}
-                  onChange={(e) => patch((c) => { c.zcodeHook.port = Number(e.target.value) || 17322 })}
-                />
-              </div>
-              <div className="min-w-[260px] flex-1 space-y-1.5">
-                <Label>接口地址</Label>
-                <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-                  {zcodeHookStatus?.endpoint || `http://127.0.0.1:${draft.zcodeHook.port}/api/zcode/pending-notes`}
-                </p>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>插件路径</Label>
-              <p className="truncate rounded-md bg-muted px-3 py-2 font-mono text-xs">
-                {zcodeHookStatus?.pluginPath || '~/.zcode/cli/plugins/cache/zcode-plugins-official/weeklog-pending-note/1.0.0'}
-              </p>
-            </div>
-            {zcodeHookStatus?.error && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-                {zcodeHookStatus.error}
-              </div>
-            )}
-            {zcodeHookStatus?.hookError && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-                {zcodeHookStatus.hookError}
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" onClick={installZcodeHook} disabled={installingZcodeHook || !draft.zcodeHook.enabled}>
-                {installingZcodeHook ? <RefreshCw className="animate-spin" /> : <Zap />}
-                一键安装 Hook
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={uninstallZcodeHook}
-                disabled={uninstallingZcodeHook || !zcodeHookStatus?.hookInstalled}
-              >
-                {uninstallingZcodeHook ? <RefreshCw className="animate-spin" /> : <Trash2 />}
-                卸载
-              </Button>
-              <Button type="button" variant="outline" onClick={copyZcodeHookConfig} disabled={!draft.zcodeHook.enabled || copyingZcodeHookConfig}>
-                {copyingZcodeHookConfig ? <RefreshCw className="animate-spin" /> : <Copy />}
-                复制配置片段
-              </Button>
-            </div>
-          </div>
-
-          <Separator />
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="ghost" onClick={() => { refreshCodexHookStatus(); refreshZcodeHookStatus() }}>
-              <RefreshCw />
-              刷新状态
-            </Button>
-          </div>
           <p className="text-xs text-muted-foreground">
-            Token 仅保存在本机密钥存储中，不在界面展示明文。一键安装会把 token 写入对应工具的配置（Codex 写 hooks.json；ZCode 写用户目录插件包）；复制配置片段会把 token 写入剪贴板。
+            Token 仅保存在本机密钥存储中，不在界面展示明文。一键安装会把 endpoint + token 写入各 agent 的 skill 目录与 MCP 配置；对话总结在 WeekLog 内完成，API Key 不会外泄给 agent。
           </p>
         </CardContent>
       </Card>

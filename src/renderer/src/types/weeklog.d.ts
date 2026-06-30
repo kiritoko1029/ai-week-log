@@ -30,6 +30,18 @@ export interface AiSubConfig {
   maxTokens: number
 }
 
+/** 小记总结模型配置：用于把 AI agent 对话总结为一条工作小记（留空字段回退主 AI）。 */
+export interface NoteSummaryConfig {
+  enabled: boolean
+  provider: 'openai' | 'anthropic' | ''
+  model: string
+  baseUrl: string
+  temperature: number
+  maxTokens: number
+  /** 触发总结的最小对话字符数（脚本侧判据，过短的闲聊不入池） */
+  triggerMinChars: number
+}
+
 export interface Config {
   schemaVersion: number
   weekStart: 'monday' | 'sunday'
@@ -46,14 +58,11 @@ export interface Config {
     miscProject: string
     dir?: string
   }
-  codexHook: {
+  mcp: {
     enabled: boolean
     port: number
   }
-  zcodeHook: {
-    enabled: boolean
-    port: number
-  }
+  noteSummary: NoteSummaryConfig
   ui: {
     theme: 'auto' | 'light' | 'dark'
     quickNoteShortcut: string
@@ -101,9 +110,13 @@ export interface Note {
   source: string
 }
 
-export interface CodexPendingNote {
+/** AI 小记来源 agent（统一池按来源显示徽标）。 */
+export type AiNoteSource = 'codex' | 'claude' | 'zcode' | string
+
+/** 统一待处理池中的一条 AI 小记（经 MCP 提交、总结后入池，待人工确认）。 */
+export interface AiPendingNote {
   id: string
-  source: 'codex'
+  source: AiNoteSource
   status: 'pending' | 'written' | 'deleted'
   cwd: string
   project: string
@@ -115,104 +128,51 @@ export interface CodexPendingNote {
   writtenAt?: string
 }
 
-export interface CodexHookStatus {
+/** WeekLog 内置 MCP HTTP 服务运行状态。 */
+export interface McpStatus {
   enabled: boolean
-  hasToken: boolean
   running: boolean
   host: string
   port: number
   endpoint: string
-  error: string
-  hookInstalled: boolean
-  hookCount: number
-  hooksPath: string
-  hookError: string
-}
-
-export interface CodexHookCopyConfigResult {
-  enabled: boolean
-  endpoint: string
-  text: string
-}
-
-export interface CodexHookInstallStatus {
-  hooksPath: string
-  exists: boolean
-  installed: boolean
-  hookCount: number
-  error: string
-}
-
-export interface CodexHookInstallResult {
-  ok: boolean
-  installed?: boolean
-  removed?: number
-  replaced?: number
-  hooksPath?: string
-  backupPath?: string
-  endpoint?: string
-  error?: string
-  status?: CodexHookInstallStatus
-}
-
-export interface ZcodePendingNote {
-  id: string
-  source: 'zcode'
-  status: 'pending' | 'written' | 'deleted'
-  cwd: string
-  project: string
-  summary: string
-  branch?: string
-  changedFiles: string[]
-  title?: string
-  createdAt: string
-  writtenAt?: string
-}
-
-export interface ZcodeHookStatus {
-  enabled: boolean
   hasToken: boolean
-  running: boolean
-  host: string
-  port: number
-  endpoint: string
-  error: string
-  hookInstalled: boolean
-  hookRegistered: boolean
-  hookEnabled: boolean
-  hookCount: number
-  pluginPath: string
-  configPath: string
-  hookError: string
-}
-
-export interface ZcodeHookCopyConfigResult {
-  enabled: boolean
-  endpoint: string
-  text: string
-}
-
-export interface ZcodeHookInstallStatus {
-  pluginPath: string
-  configPath: string
-  exists: boolean
-  installed: boolean
-  registered: boolean
-  enabled: boolean
-  hookCount: number
   error: string
 }
 
-export interface ZcodeHookInstallResult {
+/** 单个 agent 的集成状态（skill 是否安装、MCP 是否注册）。 */
+export interface IntegrationAgentStatus {
+  present: boolean
+  skillInstalled: boolean
+  mcpRegistered: boolean
+  skillPath: string
+  configPath: string
+}
+
+/** 一键集成整体状态：MCP 服务 + 各 agent 状态。 */
+export interface IntegrationStatus {
+  mcp: McpStatus
+  agents: Record<string, IntegrationAgentStatus>
+}
+
+/** 单个 agent 的安装/卸载结果。 */
+export interface IntegrationAgentResult {
   ok: boolean
-  installed?: boolean
-  removed?: number
-  pluginPath?: string
-  configPath?: string
-  backups?: string[]
+  legacyCleanup?: { removed: number; backup?: string; error?: string }
+  skillPath?: string | null
+  skillError?: string | null
+  skillRemoved?: boolean
+  mcpRemoved?: boolean
+  mcpBackup?: string | null
+  mcpError?: string | null
+}
+
+/** 一键安装/卸载结果。 */
+export interface IntegrationResult {
+  ok: boolean
   endpoint?: string
+  mcp?: McpStatus
   error?: string
-  status?: ZcodeHookInstallStatus
+  results: Record<string, IntegrationAgentResult>
 }
 
 export interface CollectStats {
@@ -599,25 +559,27 @@ export interface WeeklogAPI {
     /** 在 compact / text / md 三种格式间互转（不调 AI，纯字符串解析+重渲染）。失败回退原文本。 */
     convert: (q: { text: string; from: ReportFormat; to: ReportFormat; newline?: 'CRLF' | 'LF' }) => Promise<{ text: string }>
   }
-  codexNotes: {
-    list: () => Promise<CodexPendingNote[]>
+  /** 统一 AI 小记待处理池（取代旧 codexNotes/zcodeNotes）。 */
+  aiNotes: {
+    /** 列出 pending 小记；source 留空=全部，否则仅该来源（codex/claude/zcode）。 */
+    list: (source?: string) => Promise<AiPendingNote[]>
     delete: (ids: string[]) => Promise<{ deleted: number }>
     write: (q: { ids: string[]; project?: string; content?: string }) => Promise<{ written: number; files: string[] }>
     summarize: (ids: string[]) => Promise<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>
-    status: () => Promise<CodexHookStatus>
-    copyConfig: () => Promise<CodexHookCopyConfigResult>
-    installHook: () => Promise<CodexHookInstallResult>
-    uninstallHook: () => Promise<CodexHookInstallResult>
   }
-  zcodeNotes: {
-    list: () => Promise<ZcodePendingNote[]>
-    delete: (ids: string[]) => Promise<{ deleted: number }>
-    write: (q: { ids: string[]; project?: string; content?: string }) => Promise<{ written: number; files: string[] }>
-    summarize: (ids: string[]) => Promise<{ text?: string; model?: string; error?: string; inputTokens?: number; outputTokens?: number }>
-    status: () => Promise<ZcodeHookStatus>
-    copyConfig: () => Promise<ZcodeHookCopyConfigResult>
-    installHook: () => Promise<ZcodeHookInstallResult>
-    uninstallHook: () => Promise<ZcodeHookInstallResult>
+  /** WeekLog 内置 MCP 服务状态。 */
+  mcp: {
+    status: () => Promise<McpStatus>
+  }
+  /** 一键集成：把 skill + MCP 注册装进 codex/claude/zcode。 */
+  integration: {
+    status: () => Promise<IntegrationStatus>
+    install: (agents?: string[]) => Promise<IntegrationResult>
+    uninstall: (agents?: string[]) => Promise<IntegrationResult>
+  }
+  /** 小记总结模型连接测试。 */
+  noteSummary: {
+    test: (cfg: Config, apiKey?: string) => Promise<AiTestResult>
   }
   collect: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<CollectResult>
   generate: (q: { rangeOpts: GenerateRangeOpts; options: GenerateOptions }) => Promise<Report>

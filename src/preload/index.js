@@ -46,25 +46,24 @@ contextBridge.exposeInMainWorld('weeklog', {
   report: {
     convert: (q) => ipcRenderer.invoke('report:convert', q),
   },
-  codexNotes: {
-    list: () => ipcRenderer.invoke('codexNotes:list'),
-    delete: (ids) => ipcRenderer.invoke('codexNotes:delete', { ids }),
-    write: (q) => ipcRenderer.invoke('codexNotes:write', q),
-    summarize: (ids) => ipcRenderer.invoke('codexNotes:summarize', { ids }),
-    status: () => ipcRenderer.invoke('codexHook:status'),
-    copyConfig: () => ipcRenderer.invoke('codexHook:copyConfig'),
-    installHook: () => ipcRenderer.invoke('codexHook:install'),
-    uninstallHook: () => ipcRenderer.invoke('codexHook:uninstall'),
+  // AI 小记统一池 + MCP + 一键集成 + 小记总结模型。
+  // 注：Skill+MCP 集成仅在 Tauri 外壳生效；Electron 主进程未实现这些 handler（遗留外壳已弃用）。
+  aiNotes: {
+    list: (source) => ipcRenderer.invoke('aiNotes:list', { source }),
+    delete: (ids) => ipcRenderer.invoke('aiNotes:delete', { ids }),
+    write: (q) => ipcRenderer.invoke('aiNotes:write', q),
+    summarize: (ids) => ipcRenderer.invoke('aiNotes:summarize', { ids }),
   },
-  zcodeNotes: {
-    list: () => ipcRenderer.invoke('zcodeNotes:list'),
-    delete: (ids) => ipcRenderer.invoke('zcodeNotes:delete', { ids }),
-    write: (q) => ipcRenderer.invoke('zcodeNotes:write', q),
-    summarize: (ids) => ipcRenderer.invoke('zcodeNotes:summarize', { ids }),
-    status: () => ipcRenderer.invoke('zcodeHook:status'),
-    copyConfig: () => ipcRenderer.invoke('zcodeHook:copyConfig'),
-    installHook: () => ipcRenderer.invoke('zcodeHook:install'),
-    uninstallHook: () => ipcRenderer.invoke('zcodeHook:uninstall'),
+  mcp: {
+    status: () => ipcRenderer.invoke('mcp:status'),
+  },
+  integration: {
+    status: () => ipcRenderer.invoke('integration:status'),
+    install: (agents) => ipcRenderer.invoke('integration:install', { agents }),
+    uninstall: (agents) => ipcRenderer.invoke('integration:uninstall', { agents }),
+  },
+  noteSummary: {
+    test: (cfg, apiKey) => ipcRenderer.invoke('noteSummary:test', { cfg, apiKey }),
   },
   collect: (q) => ipcRenderer.invoke('collect', q),
   generate: (q) => ipcRenderer.invoke('generate', q),

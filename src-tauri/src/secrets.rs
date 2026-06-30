@@ -66,9 +66,19 @@ pub struct ResolvedKey {
     pub env_name: String,
 }
 
-/// 解析当前 provider 的 API Key：优先钥匙串，回退环境变量（对齐 config.js resolveApiKey）。
-pub fn resolve_api_key(cfg: &Value) -> ResolvedKey {
-    let provider = cfg["ai"]["provider"].as_str().unwrap_or("anthropic");
+/// 解析指定 provider 的 API Key：可选先查 dedicated_slot（专用钥匙串槽，
+/// 如「小记总结模型」的 `noteSummary`），再回退该 provider 的主 key（钥匙串 → 环境变量）。
+pub fn resolve_key_for(provider: &str, dedicated_slot: Option<&str>) -> ResolvedKey {
+    if let Some(slot) = dedicated_slot {
+        let dedicated = get_key(slot);
+        if !dedicated.is_empty() {
+            return ResolvedKey {
+                key: dedicated,
+                has: true,
+                env_name: "（软件内填写）".to_string(),
+            };
+        }
+    }
     let stored = get_key(provider);
     if !stored.is_empty() {
         return ResolvedKey {
@@ -98,6 +108,28 @@ pub fn resolve_api_key(cfg: &Value) -> ResolvedKey {
         has: false,
         env_name: candidates[1].to_string(),
     }
+}
+
+/// 解析当前主 AI provider 的 API Key：优先钥匙串，回退环境变量（对齐 config.js resolveApiKey）。
+pub fn resolve_api_key(cfg: &Value) -> ResolvedKey {
+    let provider = cfg["ai"]["provider"].as_str().unwrap_or("anthropic");
+    resolve_key_for(provider, None)
+}
+
+/// 「小记总结模型」provider 名：noteSummary.provider 非空则用之，否则回退主 AI provider。
+pub fn note_summary_provider(cfg: &Value) -> String {
+    let ns = cfg["noteSummary"]["provider"].as_str().unwrap_or("").trim();
+    if !ns.is_empty() {
+        ns.to_string()
+    } else {
+        cfg["ai"]["provider"].as_str().unwrap_or("anthropic").to_string()
+    }
+}
+
+/// 解析「小记总结模型」的 API Key：先查专用槽 `noteSummary`，再回退对应 provider 的主 key/env。
+pub fn resolve_note_summary_key(cfg: &Value) -> ResolvedKey {
+    let provider = note_summary_provider(cfg);
+    resolve_key_for(&provider, Some("noteSummary"))
 }
 
 /// 当前 provider 的 key 是否就绪（对齐 config.js apiKeyStatus）。
