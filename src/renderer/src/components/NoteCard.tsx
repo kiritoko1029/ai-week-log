@@ -1,5 +1,6 @@
-import { CheckCircle2 } from 'lucide-react'
+import { CheckCircle2, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 import type { Note } from '@/types/weeklog'
 
 /** 单条笔记卡片：项目级笔记（蓝色边）vs 通用笔记（紫色边）
@@ -9,6 +10,7 @@ export function NoteCard({
   miscProject,
   selected,
   onToggle,
+  onDelete,
 }: {
   note: Note
   miscProject: string
@@ -16,6 +18,8 @@ export function NoteCard({
   selected?: boolean
   /** 点击卡片/复选框的切换回调；传入则进入可选模式 */
   onToggle?: () => void
+  /** 删除当前笔记 */
+  onDelete?: () => void
 }) {
   const isProject = !!note.project
   const selectable = typeof onToggle === 'function'
@@ -48,14 +52,31 @@ export function NoteCard({
       </div>
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex items-center gap-1.5">
-          <span
-            className={cn(
-              'rounded-full bg-muted px-2 py-px text-xs font-medium',
-              !isProject && 'bg-violet-500/10 text-violet-600 dark:text-violet-400'
-            )}
-          >
-            {note.project || miscProject}
-          </span>
+          <div className="min-w-0 flex-1">
+            <span
+              className={cn(
+                'rounded-full bg-muted px-2 py-px text-xs font-medium',
+                !isProject && 'bg-violet-500/10 text-violet-600 dark:text-violet-400'
+              )}
+            >
+              {note.project || miscProject}
+            </span>
+          </div>
+          {onDelete && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label="删除笔记"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete()
+              }}
+              className="h-7 px-2 text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          )}
         </div>
         <div className="text-sm leading-relaxed text-foreground/80">{note.content}</div>
       </div>

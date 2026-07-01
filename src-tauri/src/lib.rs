@@ -37,7 +37,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State, Theme};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, Size, State, Theme};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -45,6 +45,8 @@ use tasks::Tasks;
 
 /// 默认全局快捷键（对齐 index.js SHORTCUT_DEFAULT）。
 const SHORTCUT_DEFAULT: &str = "CommandOrControl+Shift+L";
+const QUICK_NOTE_WIDTH: f64 = 560.0;
+const QUICK_NOTE_PANEL_HEIGHT: f64 = 176.0;
 
 /// 应用共享状态：缓存 git 可用性 + 当前全局快捷键。
 struct AppState {
@@ -767,6 +769,10 @@ fn shortcut_resume(app: AppHandle) -> bool {
 
 fn show_quicknote(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("quicknote") {
+        let _ = win.set_size(Size::Logical(LogicalSize::new(
+            QUICK_NOTE_WIDTH,
+            QUICK_NOTE_PANEL_HEIGHT,
+        )));
         let _ = win.center();
         let _ = win.show();
         let _ = win.set_always_on_top(true);
@@ -783,6 +789,10 @@ fn quicknote_show(app: AppHandle) {
 #[tauri::command]
 fn quicknote_hide(app: AppHandle) {
     if let Some(win) = app.get_webview_window("quicknote") {
+        let _ = win.set_size(Size::Logical(LogicalSize::new(
+            QUICK_NOTE_WIDTH,
+            QUICK_NOTE_PANEL_HEIGHT,
+        )));
         let _ = win.hide();
     }
 }

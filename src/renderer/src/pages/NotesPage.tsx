@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Plus, Pencil, RefreshCw, Loader2, Lightbulb, Trash2, WandSparkles, CheckCheck, Inbox, GitBranch, Clock3, FolderGit2, Files, ChevronDown, ChevronUp } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Plus, Pencil, RefreshCw, Loader2, Trash2, WandSparkles, CheckCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
+import { useMemoryProjectInference } from '@/hooks/useMemoryProjectInference'
 import { todayISO, daysAgoISO, fmtDateNoZero } from '@/lib/dates'
 import { cn, codeSurface } from '@/lib/utils'
 import { NoteCard } from '@/components/NoteCard'
 import { PendingNotePool } from '@/components/PendingNotePool'
+import { MemoryProjectHint } from '@/components/MemoryProjectHint'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,7 +19,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tabs, TabsListUnderline, TabsTriggerUnderline, TabsContent } from '@/components/ui/tabs'
 import { ProjectSelect } from '@/components/ProjectSelect'
-import type { Note, MemoryInferResult } from '@/types/weeklog'
+import type { Note } from '@/types/weeklog'
 
 type Filter = 'all' | 'project' | 'misc'
 
@@ -59,10 +61,14 @@ export function NotesPage() {
   const [timelineDraftDate, setTimelineDraftDate] = useState(todayISO())
   const [timelineDraftProject, setTimelineDraftProject] = useState('')
 
-  // AI 记忆推断（写笔记时辅助）
-  const [inferResult, setInferResult] = useState<MemoryInferResult | null>(null)
-  const [inferring, setInferring] = useState(false)
-  const inferTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const memoryInfer = useMemoryProjectInference({
+    text: noteText,
+    memoryEnabled: !!config?.memory?.enabled,
+  })
+  const timelineMemoryInfer = useMemoryProjectInference({
+    text: timelineDraft,
+    memoryEnabled: !!config?.memory?.enabled,
+  })
 
   const loadNotes = useCallback(async () => {
     setLoading(true)
@@ -79,31 +85,6 @@ export function NotesPage() {
   useEffect(() => {
     loadNotes()
   }, [loadNotes])
-
-  // AI 记忆推断：用户输入笔记时（debounce 800ms），调记忆推断项目
-  useEffect(() => {
-    if (inferTimer.current) clearTimeout(inferTimer.current)
-    const text = noteText.trim()
-    // 记忆未启用或输入太短：清空提示
-    if (!config?.memory?.enabled || text.length < 4) {
-      setInferResult(null)
-      return
-    }
-    inferTimer.current = setTimeout(async () => {
-      setInferring(true)
-      try {
-        const r = await api.memory.inferProject(text)
-        setInferResult(r)
-      } catch {
-        setInferResult(null)
-      } finally {
-        setInferring(false)
-      }
-    }, 800)
-    return () => {
-      if (inferTimer.current) clearTimeout(inferTimer.current)
-    }
-  }, [noteText, config?.memory?.enabled])
 
   const refreshRaw = useCallback(async (d: string) => {
     try {
@@ -258,6 +239,50 @@ export function NotesPage() {
     }
   }, [timelineDraft, timelineDraftDate, timelineDraftProject, selectedTimelineNotes, loadNotes, refreshRaw])
 
+  const deleteTimelineNote = useCallback(async (note: Note) => {
+    setTimelineBusy(true)
+    try {
+      await api.notes.replaceSummarized({
+        removeItems: [note],
+        date: note.date,
+        project: note.project || '',
+        content: '',
+      })
+      toast.success('笔记已删除')
+      setSelectedTimelineKeys((prev) => {
+        const next = new Set(prev)
+        next.delete(timelineKey(note))
+        return next
+      })
+      await Promise.all([loadNotes(), refreshRaw(note.date)])
+    } catch (e) {
+      toast.error('删除失败', { description: (e as Error).message })
+    } finally {
+      setTimelineBusy(false)
+    }
+  }, [loadNotes, refreshRaw, timelineKey])
+
+  const deleteSelectedTimelineNotes = useCallback(async () => {
+    if (!selectedTimelineNotes.length) return
+    setTimelineBusy(true)
+    try {
+      const first = selectedTimelineNotes[0]
+      await api.notes.replaceSummarized({
+        removeItems: selectedTimelineNotes,
+        date: first.date,
+        project: first.project || '',
+        content: '',
+      })
+      toast.success(`已删除 ${selectedTimelineNotes.length} 条笔记`)
+      setSelectedTimelineKeys(new Set())
+      await Promise.all([loadNotes(), refreshRaw(first.date)])
+    } catch (e) {
+      toast.error('批量删除失败', { description: (e as Error).message })
+    } finally {
+      setTimelineBusy(false)
+    }
+  }, [selectedTimelineNotes, loadNotes, refreshRaw])
+
   const projects = config?.repos.map((r) => ({ value: r.name, label: r.alias || r.name })) ?? []
 
   return (
@@ -267,11 +292,11 @@ export function NotesPage() {
         <p className="text-sm text-muted-foreground">补充会议、沟通、设计、调研等非代码工作 · notes/YYYY-MM-DD.md</p>
       </div>
 
-      <Tabs defaultValue="quick">
+      <Tabs defaultValue="timeline">
         <TabsListUnderline>
+          <TabsTriggerUnderline value="timeline">笔记时间线</TabsTriggerUnderline>
           <TabsTriggerUnderline value="quick">快速添加</TabsTriggerUnderline>
           <TabsTriggerUnderline value="ai-pending">AI 小记待处理</TabsTriggerUnderline>
-          <TabsTriggerUnderline value="timeline">笔记时间线</TabsTriggerUnderline>
           <TabsTriggerUnderline value="raw">原始格式</TabsTriggerUnderline>
         </TabsListUnderline>
 
@@ -311,41 +336,14 @@ export function NotesPage() {
             </Button>
           </div>
 
-          {/* AI 记忆推断提示 */}
-          {(inferring || (inferResult && inferResult.project && inferResult.confidence > 0.3)) && (
-            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-amber-300/60 bg-amber-50/80 p-3 dark:border-amber-700/50 dark:bg-amber-950/30">
-              <Lightbulb className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-              {inferring ? (
-                <span className="text-sm text-muted-foreground">
-                  <Loader2 className="mr-1 inline size-3 animate-spin" />
-                  正在检索历史记忆，推断相关项目…
-                </span>
-              ) : inferResult && inferResult.project ? (
-                <>
-                  <span className="text-sm">
-                    根据历史记忆，这可能与
-                    <strong className="mx-1 text-amber-700 dark:text-amber-300">【{inferResult.project}】</strong>
-                    相关（置信度 {Math.round((inferResult.confidence || 0) * 100)}%）
-                    {inferResult.suggestedSummary && (
-                      <span className="text-muted-foreground"> · {inferResult.suggestedSummary}</span>
-                    )}
-                  </span>
-                  {!noteProject && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      type="button"
-                      onClick={() => {
-                        if (inferResult.project) setNoteProject(inferResult.project)
-                      }}
-                    >
-                      归入该项目
-                    </Button>
-                  )}
-                </>
-              ) : null}
-            </div>
-          )}
+          <div className="mt-3">
+            <MemoryProjectHint
+              inferring={memoryInfer.inferring}
+              result={memoryInfer.result}
+              currentProject={noteProject}
+              onApply={setNoteProject}
+            />
+          </div>
         </CardContent>
       </Card>
         </TabsContent>
@@ -357,6 +355,8 @@ export function NotesPage() {
         sourceName="AI"
         miscProject={miscProject}
         api={api.aiNotes}
+        projects={projects}
+        memoryEnabled={!!config?.memory?.enabled}
         onWritten={() => { loadNotes(); refreshRaw(todayISO()) }}
       />
         </TabsContent>
@@ -385,6 +385,16 @@ export function NotesPage() {
           >
             {timelineBusy ? <Loader2 className="animate-spin" /> : <WandSparkles />}
             AI 精简选中{selectedTimelineNotes.length > 0 ? ` (${selectedTimelineNotes.length})` : ''}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={deleteSelectedTimelineNotes}
+            disabled={timelineBusy || selectedTimelineNotes.length === 0}
+            className="text-destructive hover:text-destructive"
+          >
+            <Trash2 />
+            删除选中{selectedTimelineNotes.length > 0 ? ` (${selectedTimelineNotes.length})` : ''}
           </Button>
         </div>
       </div>
@@ -422,6 +432,12 @@ export function NotesPage() {
               清空草稿
             </Button>
           </div>
+          <MemoryProjectHint
+            inferring={timelineMemoryInfer.inferring}
+            result={timelineMemoryInfer.result}
+            currentProject={timelineDraftProject}
+            onApply={setTimelineDraftProject}
+          />
         </div>
       )}
 
@@ -452,6 +468,7 @@ export function NotesPage() {
                     miscProject={miscProject}
                     selected={selectedTimelineKeys.has(timelineKey(n))}
                     onToggle={() => toggleTimelineNote(n)}
+                    onDelete={() => deleteTimelineNote(n)}
                   />
                 ))}
               </div>

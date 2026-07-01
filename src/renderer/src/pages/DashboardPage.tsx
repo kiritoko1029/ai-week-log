@@ -3,9 +3,11 @@ import { Plus, Sparkles, CalendarClock, Eye, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useConfig } from '@/hooks/useConfig'
+import { useMemoryProjectInference } from '@/hooks/useMemoryProjectInference'
 import { useNav } from '@/hooks/useNav'
 import { todayISO } from '@/lib/dates'
 import { StatCard } from '@/components/StatCard'
+import { MemoryProjectHint } from '@/components/MemoryProjectHint'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,6 +33,10 @@ export function DashboardPage() {
   const [statsError, setStatsError] = useState<string | null>(null)
   const [noteText, setNoteText] = useState('')
   const [noteProject, setNoteProject] = useState('')
+  const memoryInfer = useMemoryProjectInference({
+    text: noteText,
+    memoryEnabled: !!config?.memory?.enabled,
+  })
 
   const loadStats = useCallback(async () => {
     try {
@@ -129,6 +135,12 @@ export function DashboardPage() {
               添加笔记
             </Button>
           </div>
+          <MemoryProjectHint
+            inferring={memoryInfer.inferring}
+            result={memoryInfer.result}
+            currentProject={noteProject}
+            onApply={setNoteProject}
+          />
         </CardContent>
       </Card>
 

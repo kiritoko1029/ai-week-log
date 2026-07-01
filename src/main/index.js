@@ -38,6 +38,8 @@ const APP_ICON_ICO = path.join(__dirname, '..', '..', 'build', 'icon.ico')
 // 开发模式直连 Vite dev server（HMR）；生产模式加载打包产物 dist/
 const DEV_SERVER_URL = process.env.WEEKLOG_DEV ? 'http://localhost:5173' : ''
 const DEV_SERVER_ORIGIN = DEV_SERVER_URL ? new URL(DEV_SERVER_URL).origin : ''
+const QUICK_NOTE_WIDTH = 560
+const QUICK_NOTE_PANEL_HEIGHT = 176
 
 let mainWindow = null
 let quickNoteWin = null
@@ -150,8 +152,8 @@ function createWindow() {
 function createQuickNoteWindow() {
   const iconPath = getAppIconPath()
   quickNoteWin = new BrowserWindow({
-    width: 560,
-    height: 240,
+    width: QUICK_NOTE_WIDTH,
+    height: QUICK_NOTE_PANEL_HEIGHT,
     frame: false,
     resizable: false,
     minimizable: false,
@@ -160,7 +162,8 @@ function createQuickNoteWindow() {
     show: false,
     skipTaskbar: true,
     alwaysOnTop: true,
-    backgroundColor: windowBg(),
+    transparent: true,
+    backgroundColor: '#00000000',
     icon: iconPath,
     webPreferences: {
       preload: PRELOAD,
@@ -201,13 +204,17 @@ function createQuickNoteWindow() {
 function showQuickNote() {
   if (!quickNoteWin) createQuickNoteWindow()
   if (quickNoteWin.isMinimized()) quickNoteWin.restore()
+  quickNoteWin.setSize(QUICK_NOTE_WIDTH, QUICK_NOTE_PANEL_HEIGHT, false)
   quickNoteWin.center()
   quickNoteWin.show()
   quickNoteWin.focus()
 }
 
 function hideQuickNote() {
-  if (quickNoteWin) quickNoteWin.hide()
+  if (quickNoteWin) {
+    quickNoteWin.setSize(QUICK_NOTE_WIDTH, QUICK_NOTE_PANEL_HEIGHT, false)
+    quickNoteWin.hide()
+  }
 }
 
 // ── 全局快捷键（快速记笔记），可在设置中编辑 ──

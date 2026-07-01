@@ -2,11 +2,14 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { RefreshCw, Loader2, Trash2, WandSparkles, CheckCheck, Inbox, GitBranch, Clock3, FolderGit2, Files, ChevronDown, ChevronUp, Plus, Bot } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useMemoryProjectInference } from '@/hooks/useMemoryProjectInference'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
+import { ProjectSelect, type ProjectOption } from '@/components/ProjectSelect'
+import { MemoryProjectHint } from '@/components/MemoryProjectHint'
 import type { AiPendingNote } from '@/types/weeklog'
 
 /** 统一池中的一条待处理小记（含 source，前端按来源显示徽标） */
@@ -58,20 +61,27 @@ interface PendingNotePoolProps {
   sourceName: string // 'Codex' / 'ZCode'
   miscProject: string
   api: PendingPoolApi
+  projects?: ProjectOption[]
+  memoryEnabled?: boolean
   /** 写入正式笔记后回调（用于刷新时间线/原始视图） */
   onWritten?: () => void
   /** 暴露刷新方法给外部（可选） */
   registerRefresh?: (fn: () => void) => void
 }
 
-export function PendingNotePool({ title, sourceName, miscProject, api, onWritten, registerRefresh }: PendingNotePoolProps) {
+export function PendingNotePool({ title, sourceName, miscProject, api, projects = [], memoryEnabled = false, onWritten, registerRefresh }: PendingNotePoolProps) {
   const [pendingNotes, setPendingNotes] = useState<PendingItem[]>([])
   const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([])
   const [loadingPendingNotes, setLoadingPendingNotes] = useState(true)
   const [pendingBusy, setPendingBusy] = useState(false)
   const [pendingSummaryDraft, setPendingSummaryDraft] = useState('')
+  const [pendingSummaryProject, setPendingSummaryProject] = useState('')
   const [pendingSummaryUsageText, setPendingSummaryUsageText] = useState('')
   const [expandedPendingNoteIds, setExpandedPendingNoteIds] = useState<string[]>([])
+  const memoryInfer = useMemoryProjectInference({
+    text: pendingSummaryDraft,
+    memoryEnabled,
+  })
 
   const loadPendingNotes = useCallback(async () => {
     setLoadingPendingNotes(true)
@@ -120,6 +130,7 @@ export function PendingNotePool({ title, sourceName, miscProject, api, onWritten
       setSelectedPendingIds([])
       setExpandedPendingNoteIds((prev) => prev.filter((id) => !selectedPendingIds.includes(id)))
       setPendingSummaryDraft('')
+      setPendingSummaryProject('')
       setPendingSummaryUsageText('')
       await loadPendingNotes()
     } catch (e) {
@@ -137,6 +148,7 @@ export function PendingNotePool({ title, sourceName, miscProject, api, onWritten
       toast.success(`已写入 ${r.written} 条小记`)
       setSelectedPendingIds([])
       setPendingSummaryDraft('')
+      setPendingSummaryProject('')
       setPendingSummaryUsageText('')
       await loadPendingNotes()
       onWritten?.()
@@ -163,6 +175,8 @@ export function PendingNotePool({ title, sourceName, miscProject, api, onWritten
             ? `输入 ${formatTokenK(r.inputTokens)} / 输出 ${formatTokenK(r.outputTokens)} token`
             : ''
         setPendingSummaryDraft(r.text)
+        const first = pendingNotes.find((item) => selectedPendingIds.includes(item.id))
+        setPendingSummaryProject(first?.project || '')
         setPendingSummaryUsageText(usageText)
         toast.success('AI 总结已生成，可编辑后写入', usageText ? { description: usageText } : undefined)
       }
@@ -181,12 +195,13 @@ export function PendingNotePool({ title, sourceName, miscProject, api, onWritten
       const first = pendingNotes.find((item) => selectedPendingIds.includes(item.id))
       const r = await api.write({
         ids: selectedPendingIds,
-        project: first?.project || '',
+        project: pendingSummaryProject || first?.project || '',
         content,
       })
       toast.success(`已写入总结小记，处理 ${r.written} 条候选`)
       setSelectedPendingIds([])
       setPendingSummaryDraft('')
+      setPendingSummaryProject('')
       setPendingSummaryUsageText('')
       await loadPendingNotes()
       onWritten?.()
@@ -195,7 +210,7 @@ export function PendingNotePool({ title, sourceName, miscProject, api, onWritten
     } finally {
       setPendingBusy(false)
     }
-  }, [pendingSummaryDraft, selectedPendingIds, pendingNotes, loadPendingNotes, api, onWritten])
+  }, [pendingSummaryDraft, pendingSummaryProject, selectedPendingIds, pendingNotes, loadPendingNotes, api, onWritten])
 
   return (
     <Card>
@@ -341,18 +356,34 @@ export function PendingNotePool({ title, sourceName, miscProject, api, onWritten
               onChange={(e) => setPendingSummaryDraft(e.target.value)}
               className="min-h-[96px]"
             />
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="min-w-[180px] space-y-1">
+                <Label className="text-xs">写入项目</Label>
+                <ProjectSelect
+                  value={pendingSummaryProject}
+                  onChange={setPendingSummaryProject}
+                  options={projects}
+                  miscLabel={miscProject}
+                />
+              </div>
               <Button size="sm" onClick={writePendingSummaryDraft} disabled={pendingBusy || !selectedPendingIds.length || !pendingSummaryDraft.trim()} className="bg-violet-600 text-white hover:bg-violet-600/90">
                 <Plus />
                 写入总结小记
               </Button>
               <Button size="sm" variant="outline" onClick={() => {
                 setPendingSummaryDraft('')
+                setPendingSummaryProject('')
                 setPendingSummaryUsageText('')
               }} disabled={pendingBusy}>
                 清空草稿
               </Button>
             </div>
+            <MemoryProjectHint
+              inferring={memoryInfer.inferring}
+              result={memoryInfer.result}
+              currentProject={pendingSummaryProject}
+              onApply={setPendingSummaryProject}
+            />
           </div>
         )}
       </CardContent>

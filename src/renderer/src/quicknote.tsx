@@ -3,10 +3,11 @@ import { createRoot } from 'react-dom/client'
 import { LineChart, X, Check } from 'lucide-react'
 import './styles/globals.css'
 import { api } from '@/lib/api'
+import { useMemoryProjectInference } from '@/hooks/useMemoryProjectInference'
 import { todayISO } from '@/lib/dates'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { MemoryProjectHint } from '@/components/MemoryProjectHint'
 
 function QuickNoteApp() {
   const [text, setText] = useState('')
@@ -14,6 +15,7 @@ function QuickNoteApp() {
   const [projects, setProjects] = useState<{ name: string; label: string }[]>([])
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [statusMsg, setStatusMsg] = useState('Enter 保存 · Esc 关闭')
+  const memoryInfer = useMemoryProjectInference({ text })
 
   // 主题同步（读 config）
   const applyTheme = useCallback(async () => {
@@ -85,7 +87,7 @@ function QuickNoteApp() {
   }, [loadProjects, applyTheme])
 
   return (
-    <div className="fixed inset-0 flex flex-col overflow-hidden bg-background">
+    <div className="fixed inset-0 flex h-[176px] flex-col overflow-hidden bg-background">
       {/* 标题栏（可拖拽） */}
       <div
         data-app-region="drag"
@@ -106,7 +108,7 @@ function QuickNoteApp() {
       </div>
 
       {/* 主体 */}
-      <div className="flex flex-1 flex-col gap-2.5 p-3">
+      <div className="flex flex-col gap-2.5 p-3">
         <Textarea
           id="qn-input"
           value={text}
@@ -114,27 +116,31 @@ function QuickNoteApp() {
           onKeyDown={onKeyDown}
           placeholder="例如：参加架构评审，确认了订单服务拆分方案…"
           autoFocus
-          className="min-h-[56px] max-h-[100px] flex-1 resize-none overflow-hidden"
+          className="h-16 min-h-16 resize-none overflow-hidden leading-5"
         />
         <div className="flex items-center gap-2">
-          <Select
+          <select
             value={project || '__misc__'}
-            onValueChange={(v) => setProject(v === '__misc__' ? '' : v)}
+            onChange={(e) => setProject(e.target.value === '__misc__' ? '' : e.target.value)}
+            className="h-9 w-[180px] shrink-0 cursor-pointer truncate rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none ring-offset-background transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            aria-label="选择项目"
           >
-            <SelectTrigger className="max-w-[160px]">
-              <SelectValue placeholder="日常工作（通用）" />
-            </SelectTrigger>
-            <SelectContent className="max-h-[160px]">
-              <SelectItem value="__misc__">日常工作（通用）</SelectItem>
-              {projects.map((p) => (
-                <SelectItem key={p.name} value={p.name}>{p.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            <option value="__misc__">日常工作（通用）</option>
+            {projects.map((p) => (
+              <option key={p.name} value={p.name}>{p.label}</option>
+            ))}
+          </select>
           <Button size="sm" onClick={submit} className="bg-violet-600 hover:bg-violet-600/90">
             <Check />
             保存
           </Button>
+          <MemoryProjectHint
+            compact
+            inferring={memoryInfer.inferring}
+            result={memoryInfer.result}
+            currentProject={project}
+            onApply={setProject}
+          />
           <span className="ml-auto text-right font-mono text-[11px] text-muted-foreground">{statusMsg}</span>
         </div>
       </div>

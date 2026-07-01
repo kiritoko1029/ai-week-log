@@ -27,14 +27,15 @@
         "label": "quicknote",
         "title": "快速记笔记",
         "url": "quicknote.html",
-        "width": 480,
-        "height": 360,
+        "width": 560,
+        "height": 176,
         "resizable": false,
         "decorations": false,
         "alwaysOnTop": true,
         "visible": false,
         "skipTaskbar": true,
-        "center": true
+        "center": true,
+        "transparent": true
       }
     ],
     "security": {
