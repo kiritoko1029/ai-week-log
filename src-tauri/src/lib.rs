@@ -1139,6 +1139,11 @@ fn updates_install(app: AppHandle, state: State<'_, AppState>) -> Value {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例锁必须最先注册（官方要求）：应用已在运行时，第二个实例的启动会触发此回调
+        // （在首个实例中执行）→ 显示已有主窗口，随后第二个实例进程自动退出，避免多托盘图标。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main(app);
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
